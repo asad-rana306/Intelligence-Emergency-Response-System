@@ -1,0 +1,216 @@
+# ═══════════════════════════════════════════════════════════════
+#  IERS API Gateway — Configuration
+# ═══════════════════════════════════════════════════════════════
+#  This is the single entry point for all clients:
+#  Phone apps, responder apps, dispatcher dashboard, car devices.
+#
+#  ENVIRONMENT VARIABLES (set before running):
+#    JWT_SECRET        — HMAC key shared with Auth Service (min 32 chars)
+#    DEVICE_API_KEY    — Static key shared with car embedded firmware
+#    REDIS_HOST        — Redis hostname (default: localhost)
+#    REDIS_PORT        — Redis port (default: 6379)
+#    REDIS_PASSWORD    — Redis password (default: blank)
+#    EUREKA_URL        — Eureka server URL (default: http://localhost:8761/eureka)
+# ═══════════════════════════════════════════════════════════════
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+
+  # ── Redis ──
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+
+  # ── Gateway Routes ──
+  cloud:
+    gateway:
+      # ── Global defaults applied to EVERY route ──
+      default-filters:
+        - name: RequestRateLimiter
+          args:
+            redis-rate-limiter.replenishRate: 20    # tokens per second
+            redis-rate-limiter.burstCapacity: 40    # max burst
+            redis-rate-limiter.requestedTokens: 1   # tokens per request
+            key-resolver: "#{@ipKeyResolver}"
+
+      routes:
+        # ───────────────────────────────────────────
+        #  AUTH & IDENTITY SERVICE (Service 2)
+        # ───────────────────────────────────────────
+        - id: auth-public
+          uri: lb://auth-service
+          predicates:
+            - Path=/auth/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: authCircuitBreaker
+                fallbackUri: forward:/fallback/auth
+
+        - id: auth-users
+          uri: lb://auth-service
+          predicates:
+            - Path=/api/users/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: authCircuitBreaker
+                fallbackUri: forward:/fallback/auth
+
+        - id: auth-medical-profiles
+          uri: lb://auth-service
+          predicates:
+            - Path=/api/medical-profiles/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: authCircuitBreaker
+                fallbackUri: forward:/fallback/auth
+
+        - id: auth-emergency-contacts
+          uri: lb://auth-service
+          predicates:
+            - Path=/api/emergency-contacts/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: authCircuitBreaker
+                fallbackUri: forward:/fallback/auth
+
+        - id: auth-responders
+          uri: lb://auth-service
+          predicates:
+            - Path=/api/responders/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: authCircuitBreaker
+                fallbackUri: forward:/fallback/auth
+
+        # Internal Feign route — only reachable from within Docker network
+        - id: auth-internal
+          uri: lb://auth-service
+          predicates:
+            - Path=/internal/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: authCircuitBreaker
+                fallbackUri: forward:/fallback/auth
+
+        # ───────────────────────────────────────────
+        #  IOT & TELEMETRY SERVICE (Service 3)
+        # ───────────────────────────────────────────
+        - id: iot-telemetry
+          uri: lb://iot-telemetry-service
+          predicates:
+            - Path=/api/telemetry/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: iotCircuitBreaker
+                fallbackUri: forward:/fallback/iot
+            # Higher rate limit for device endpoints (heartbeats every few seconds)
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 50
+                redis-rate-limiter.burstCapacity: 100
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+
+        - id: iot-devices
+          uri: lb://iot-telemetry-service
+          predicates:
+            - Path=/api/devices/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: iotCircuitBreaker
+                fallbackUri: forward:/fallback/iot
+
+        # ───────────────────────────────────────────
+        #  DISPATCH & NOTIFICATION SERVICE (Service 4)
+        # ───────────────────────────────────────────
+        - id: dispatch-rest
+          uri: lb://dispatch-notification-service
+          predicates:
+            - Path=/api/dispatch/**,/api/incidents/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: dispatchCircuitBreaker
+                fallbackUri: forward:/fallback/dispatch
+
+        # WebSocket route for live GPS streaming
+        - id: dispatch-websocket
+          uri: lb:ws://dispatch-notification-service
+          predicates:
+            - Path=/ws/**
+
+# ── Eureka Discovery ──
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+    fetch-registry: true
+    register-with-eureka: true
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.uuid}
+
+# ── Gateway JWT & Device Config ──
+gateway:
+  jwt:
+    secret: ${JWT_SECRET:<YOUR_JWT_SECRET_MIN_32_CHARS>}
+  device:
+    api-key: ${DEVICE_API_KEY:<YOUR_DEVICE_API_KEY>}
+
+# ── Resilience4j Circuit Breakers ──
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+        slow-call-duration-threshold: 5s
+        slow-call-rate-threshold: 80
+    instances:
+      authCircuitBreaker:
+        base-config: default
+      iotCircuitBreaker:
+        base-config: default
+      dispatchCircuitBreaker:
+        base-config: default
+
+  timelimiter:
+    configs:
+      default:
+        timeout-duration: 10s
+
+# ── Actuator ──
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, gateway
+  endpoint:
+    health:
+      show-details: when-authorized
+    gateway:
+      enabled: true
+
+# ── Logging ──
+logging:
+  level:
+    root: INFO
+    com.iers.gateway: DEBUG
+    org.springframework.cloud.gateway: DEBUG
+    io.github.resilience4j: DEBUG
