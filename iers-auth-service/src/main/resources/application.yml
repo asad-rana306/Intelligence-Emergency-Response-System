@@ -1,0 +1,77 @@
+# ═══════════════════════════════════════════════════════════════
+#  IERS Auth & Identity Service — Configuration
+# ═══════════════════════════════════════════════════════════════
+#  ENVIRONMENT VARIABLES (set before running):
+#    JWT_SECRET       — HMAC key, MUST match the API Gateway (min 32 chars)
+#    DB_HOST          — PostgreSQL hostname (default: localhost)
+#    DB_PORT          — PostgreSQL port (default: 5432)
+#    DB_NAME          — Database name (default: iers_auth)
+#    DB_USERNAME      — Database user (default: postgres)
+#    DB_PASSWORD      — Database password
+#    REDIS_HOST       — Redis hostname (default: localhost)
+#    REDIS_PORT       — Redis port (default: 6379)
+#    REDIS_PASSWORD   — Redis password (default: blank)
+#    EUREKA_URL       — Eureka server URL
+# ═══════════════════════════════════════════════════════════════
+
+server:
+  port: 8081
+
+spring:
+  application:
+    name: auth-service
+
+  # ── PostgreSQL ──
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:iers_auth}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:<YOUR_DB_PASSWORD>}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+  # ── Redis ──
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+
+# ── JWT ──
+auth:
+  jwt:
+    secret: ${JWT_SECRET:<YOUR_JWT_SECRET_MIN_32_CHARS>}
+    access-token-expiry: PT15M    # 15 minutes
+    refresh-token-expiry: P7D     # 7 days
+
+# ── Eureka ──
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+    fetch-registry: true
+    register-with-eureka: true
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.uuid}
+
+# ── Actuator ──
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics
+
+# ── Logging ──
+logging:
+  level:
+    root: INFO
+    com.iers.auth: DEBUG
+    org.hibernate.SQL: WARN
