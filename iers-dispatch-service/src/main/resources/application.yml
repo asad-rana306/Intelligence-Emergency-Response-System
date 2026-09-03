@@ -1,0 +1,100 @@
+# ═══════════════════════════════════════════════════════════════
+#  IERS Dispatch & Notification Service — Configuration
+# ═══════════════════════════════════════════════════════════════
+#  ENVIRONMENT VARIABLES:
+#    DB_HOST / DB_PORT / DB_NAME / DB_USERNAME / DB_PASSWORD
+#    REDIS_HOST / REDIS_PORT / REDIS_PASSWORD
+#    KAFKA_BOOTSTRAP
+#    TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER
+#    EUREKA_URL
+# ═══════════════════════════════════════════════════════════════
+
+server:
+  port: 8083
+
+spring:
+  application:
+    name: dispatch-notification-service
+
+  # ── PostgreSQL + PostGIS ──
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:iers_dispatch}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:<YOUR_DB_PASSWORD>}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # ── Redis (GPS streaming cache) ──
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+
+  # ── Kafka Consumer ──
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      group-id: dispatch-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+# ── Dispatch Config ──
+dispatch:
+  kafka:
+    topic: crash-events
+    group-id: dispatch-group
+  twilio:
+    account-sid: ${TWILIO_ACCOUNT_SID:<YOUR_TWILIO_SID>}
+    auth-token: ${TWILIO_AUTH_TOKEN:<YOUR_TWILIO_AUTH_TOKEN>}
+    from-number: ${TWILIO_FROM_NUMBER:<YOUR_TWILIO_PHONE>}
+    enabled: ${TWILIO_ENABLED:false}
+  tracking-base-url: ${TRACKING_BASE_URL:http://localhost:3000/track}
+
+# ── Eureka ──
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+    fetch-registry: true
+    register-with-eureka: true
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.uuid}
+
+# ── Resilience4j (Feign circuit breakers) ──
+resilience4j:
+  circuitbreaker:
+    instances:
+      authServiceClient:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+  timelimiter:
+    instances:
+      authServiceClient:
+        timeout-duration: 5s
+
+spring.cloud.openfeign.circuitbreaker.enabled: true
+
+# ── Actuator ──
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics
+
+# ── Logging ──
+logging:
+  level:
+    root: INFO
+    com.iers.dispatch: DEBUG
+    org.apache.kafka: WARN
