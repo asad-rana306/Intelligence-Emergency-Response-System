@@ -1,0 +1,105 @@
+# ═══════════════════════════════════════════════════════════════
+#  IERS IoT & Telemetry Service — Configuration
+# ═══════════════════════════════════════════════════════════════
+#  ENVIRONMENT VARIABLES:
+#    DB_HOST / DB_PORT / DB_NAME / DB_USERNAME / DB_PASSWORD
+#    REDIS_HOST / REDIS_PORT / REDIS_PASSWORD
+#    KAFKA_BOOTSTRAP   — Kafka broker(s) (default: localhost:9092)
+#    ML_SERVICE_URL     — Python ML container (default: http://localhost:8000)
+#    EUREKA_URL
+# ═══════════════════════════════════════════════════════════════
+
+server:
+  port: 8082
+
+spring:
+  application:
+    name: iot-telemetry-service
+
+  # ── PostgreSQL ──
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:iers_iot}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:<YOUR_DB_PASSWORD>}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # ── Redis ──
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+
+  # ── Kafka Producer ──
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+
+  # ── File uploads ──
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 15MB
+
+# ── IoT Service Config ──
+iot:
+  kafka:
+    topic: crash-events
+  ml-service:
+    url: ${ML_SERVICE_URL:http://localhost:8000}
+  media:
+    upload-dir: ${MEDIA_UPLOAD_DIR:/tmp/iers-uploads}
+
+# ── Resilience4j (ML service circuit breaker) ──
+resilience4j:
+  circuitbreaker:
+    instances:
+      mlService:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+        slow-call-duration-threshold: 3s
+        slow-call-rate-threshold: 80
+  timelimiter:
+    instances:
+      mlService:
+        timeout-duration: 5s
+
+# ── Eureka ──
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+    fetch-registry: true
+    register-with-eureka: true
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.uuid}
+
+# ── Actuator ──
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics
+
+# ── Logging ──
+logging:
+  level:
+    root: INFO
+    com.iers.iot: DEBUG
+    org.apache.kafka: WARN
