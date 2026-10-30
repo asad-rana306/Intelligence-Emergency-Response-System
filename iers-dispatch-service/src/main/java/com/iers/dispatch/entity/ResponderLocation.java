@@ -9,6 +9,10 @@ import java.util.UUID;
  * Local mirror of responder GPS positions for PostGIS spatial queries.
  * Synced from Auth Service. Uses plain lat/lng columns with PostGIS
  * functions in native queries for distance calculation.
+ *
+ * PHASE 3: responderId is now the responder's USER id (the same id the phone sends
+ * in X-User-Id). Before, it held the responder-profile id, which never matched the
+ * id used on accept/reject.
  */
 @Entity
 @Table(name = "responder_locations")
@@ -22,6 +26,9 @@ public class ResponderLocation {
 
     @Column(name = "user_name")
     private String userName;
+
+    @Column(name = "phone")
+    private String phone;
 
     @Column(name = "vehicle_id")
     private String vehicleId;

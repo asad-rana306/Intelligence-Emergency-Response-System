@@ -11,13 +11,19 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class SpatialQueryService {
+
+    static final String ON_DUTY = "ON_DUTY";
+    static final String OFF_DUTY = "OFF_DUTY";
+    static final String ON_MISSION = "ON_MISSION";
 
     private final ResponderLocationRepository locationRepository;
     private final AuthServiceClient authServiceClient;
@@ -27,7 +33,7 @@ public class SpatialQueryService {
      * excluding any responders already attempted for this incident.
      */
     public ResponderLocation findNearestResponder(double lat, double lng,
-                                                   List<UUID> excludedResponderIds) {
+                                                  List<UUID> excludedResponderIds) {
         List<ResponderLocation> results;
 
         if (excludedResponderIds == null || excludedResponderIds.isEmpty()) {
@@ -51,27 +57,47 @@ public class SpatialQueryService {
     /**
      * Sync responder locations from Auth Service every 15 seconds.
      * This keeps the local PostGIS-indexed table current for spatial queries.
+     *
+     * PHASE 3: the key is the responder's USER id (dto.userId), the same id the phone sends
+     * in X-User-Id. Anyone who is ON_DUTY here but missing from Auth's list is marked OFF_DUTY,
+     * so a responder who went off duty (or an old row from before this change) is never offered
+     * an incident. An empty list is ignored, because Auth being down also looks like an empty list.
      */
     @Scheduled(fixedRate = 15000)
     @Transactional
     public void syncResponderLocations() {
         try {
             List<AvailableResponderDto> responders = authServiceClient.getAvailableResponders();
+            Set<UUID> seen = new HashSet<>();
 
             for (AvailableResponderDto dto : responders) {
-                UUID responderId = UUID.fromString(dto.getResponderId());
+                if (dto.getUserId() == null) {
+                    continue;
+                }
+                UUID userId = UUID.fromString(dto.getUserId());
+                seen.add(userId);
 
-                ResponderLocation loc = locationRepository.findByResponderId(responderId)
-                        .orElse(ResponderLocation.builder().responderId(responderId).build());
+                ResponderLocation loc = locationRepository.findByResponderId(userId)
+                        .orElse(ResponderLocation.builder().responderId(userId).build());
 
                 loc.setUserName(dto.getFullName());
+                loc.setPhone(dto.getPhone());
                 loc.setVehicleId(dto.getVehicleId());
-                loc.setDutyStatus("ON_DUTY");
+                loc.setDutyStatus(ON_DUTY);
                 loc.setLatitude(dto.getLatitude());
                 loc.setLongitude(dto.getLongitude());
                 loc.setLastUpdated(Instant.now());
 
                 locationRepository.save(loc);
+            }
+
+            if (!seen.isEmpty()) {
+                for (ResponderLocation loc : locationRepository.findAll()) {
+                    if (ON_DUTY.equals(loc.getDutyStatus()) && !seen.contains(loc.getResponderId())) {
+                        loc.setDutyStatus(OFF_DUTY);
+                        locationRepository.save(loc);
+                    }
+                }
             }
 
             log.debug("Synced {} responder locations from Auth Service", responders.size());
@@ -86,7 +112,7 @@ public class SpatialQueryService {
     @Transactional
     public void markResponderOnMission(UUID responderId) {
         locationRepository.findByResponderId(responderId).ifPresent(loc -> {
-            loc.setDutyStatus("ON_MISSION");
+            loc.setDutyStatus(ON_MISSION);
             locationRepository.save(loc);
         });
     }
@@ -97,7 +123,7 @@ public class SpatialQueryService {
     @Transactional
     public void markResponderOnDuty(UUID responderId) {
         locationRepository.findByResponderId(responderId).ifPresent(loc -> {
-            loc.setDutyStatus("ON_DUTY");
+            loc.setDutyStatus(ON_DUTY);
             locationRepository.save(loc);
         });
     }

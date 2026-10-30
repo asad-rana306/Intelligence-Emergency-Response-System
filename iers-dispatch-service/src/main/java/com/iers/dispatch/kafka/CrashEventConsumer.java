@@ -18,16 +18,25 @@ public class CrashEventConsumer {
     private final ObjectMapper objectMapper;
 
     @KafkaListener(topics = "${dispatch.kafka.topic:crash-events}",
-                   groupId = "${dispatch.kafka.group-id:dispatch-group}")
+            groupId = "${dispatch.kafka.group-id:dispatch-group}")
     public void consume(String payload) {
         try {
             CrashEventMessage message = objectMapper.readValue(payload, CrashEventMessage.class);
             log.info("Kafka event received: type={}, crashEventId={}",
                     message.getEventType(), message.getCrashEventId());
 
+            if (message.getEventType() == null) {
+                log.warn("Kafka event without eventType ignored");
+                return;
+            }
+
             switch (message.getEventType()) {
                 case "CRASH_DETECTED" -> orchestrator.handleCrashDetected(message);
                 case "CRASH_CANCELLED" -> orchestrator.handleCrashCancelled(message);
+                // The 10-second window opened or closed with no dispatch. The Realtime service
+                // cares about these. Dispatch has nothing to do.
+                case "CRASH_PENDING", "CRASH_DISMISSED" ->
+                        log.debug("Ignoring {} (not for Dispatch)", message.getEventType());
                 default -> log.warn("Unknown event type: {}", message.getEventType());
             }
         } catch (JsonProcessingException e) {

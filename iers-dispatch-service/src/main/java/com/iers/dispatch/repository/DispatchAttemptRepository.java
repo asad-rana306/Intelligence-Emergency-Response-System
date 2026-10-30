@@ -8,4 +8,7 @@ import java.util.UUID;
 public interface DispatchAttemptRepository extends JpaRepository<DispatchAttempt, UUID> {
     List<DispatchAttempt> findByIncidentIdOrderByAttemptNumber(UUID incidentId);
     int countByIncidentId(UUID incidentId);
+
+    /** Has this responder ever been offered this incident? (Tells "offer expired" 409 from "not yours" 403.) */
+    boolean existsByIncidentIdAndResponderId(UUID incidentId, UUID responderId);
 }

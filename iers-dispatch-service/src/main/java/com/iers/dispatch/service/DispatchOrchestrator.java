@@ -1,32 +1,60 @@
 package com.iers.dispatch.service;
 
+import com.iers.dispatch.dto.Viewer;
 import com.iers.dispatch.dto.feign.EmergencyContactDto;
 import com.iers.dispatch.dto.feign.MedicalProfileDto;
 import com.iers.dispatch.dto.kafka.CrashEventMessage;
+import com.iers.dispatch.dto.kafka.IncidentEventMessage;
 import com.iers.dispatch.dto.response.DispatchAckResponse;
 import com.iers.dispatch.entity.DispatchAttempt;
 import com.iers.dispatch.entity.Incident;
 import com.iers.dispatch.entity.ResponderLocation;
 import com.iers.dispatch.entity.enums.DispatchResponseType;
 import com.iers.dispatch.entity.enums.IncidentStatus;
+import com.iers.dispatch.exception.IncidentAccessDeniedException;
 import com.iers.dispatch.exception.IncidentNotFoundException;
+import com.iers.dispatch.exception.InvalidIncidentStateException;
 import com.iers.dispatch.feign.AuthServiceClient;
+import com.iers.dispatch.kafka.IncidentEventPublisher;
 import com.iers.dispatch.repository.DispatchAttemptRepository;
 import com.iers.dispatch.repository.IncidentRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
+/**
+ * The brain of Dispatch.
+ *
+ * Rules (PHASE 3):
+ *  - Every step is announced on Kafka topic "incident-events" (IncidentEventPublisher).
+ *  - Only the OFFERED responder can accept or reject. Only the ASSIGNED responder can move the
+ *    incident on. A cancelled or finished incident can never be accepted.
+ *  - Every change of state is one conditional database update (see IncidentRepository), so a timer,
+ *    the sweep, a driver cancel and a responder tap can never handle the same thing twice.
+ *  - If nobody is free, Dispatch tries again every 15 seconds. After 2 minutes without an accept it
+ *    announces NO_RESPONDER_AVAILABLE once, and keeps trying until the incident is 30 minutes old.
+ *  - Responders who rejected are never asked again for the same incident. Responders who only let the
+ *    offer time out may be asked again, but only after everybody who was not asked yet.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class DispatchOrchestrator {
+
+    static final String REASON_DRIVER_CANCELLED = "DRIVER_CANCELLED";
 
     private final IncidentRepository incidentRepository;
     private final DispatchAttemptRepository attemptRepository;
@@ -35,6 +63,24 @@ public class DispatchOrchestrator {
     private final EscalationTimerService escalationTimerService;
     private final NotificationService notificationService;
     private final GpsStreamingService gpsStreamingService;
+    private final IncidentEventPublisher eventPublisher;
+
+    // Defaults are the contract values; application.yml may override them.
+    @Value("${dispatch.offer-seconds:30}")
+    private long offerSeconds = 30;
+
+    @Value("${dispatch.retry-interval-seconds:15}")
+    private long retryIntervalSeconds = 15;
+
+    /** Safety net: if the service dies between two steps, the sweep resumes after this long. */
+    @Value("${dispatch.safety-retry-seconds:10}")
+    private long safetyRetrySeconds = 10;
+
+    @Value("${dispatch.no-responder-after-seconds:120}")
+    private long noResponderAfterSeconds = 120;
+
+    @Value("${dispatch.give-up-minutes:30}")
+    private long giveUpMinutes = 30;
 
     // ═══════════════════════════════════════════════════
     //  CRASH_DETECTED — create incident and dispatch
@@ -45,8 +91,15 @@ public class DispatchOrchestrator {
         log.info("Processing CRASH_DETECTED: crashEventId={}, priority={}",
                 event.getCrashEventId(), event.getPriorityScore());
 
-        UUID driverId = event.getDriverId() != null ? UUID.fromString(event.getDriverId()) : null;
         UUID crashEventId = UUID.fromString(event.getCrashEventId());
+
+        // Kafka can deliver the same message twice. One crash = one incident.
+        if (incidentRepository.findByCrashEventId(crashEventId).isPresent()) {
+            log.info("Incident for crash {} already exists — ignoring repeated event", crashEventId);
+            return;
+        }
+
+        UUID driverId = event.getDriverId() != null ? UUID.fromString(event.getDriverId()) : null;
 
         // ── Fetch medical profile from Auth (circuit-broken) ──
         MedicalProfileDto medProfile = driverId != null
@@ -70,10 +123,16 @@ public class DispatchOrchestrator {
                 .status(IncidentStatus.DISPATCHING)
                 .bloodType(medProfile.getBloodType())
                 .allergies(medProfile.getAllergies())
+                .nextRetryAt(Instant.now().plusSeconds(safetyRetrySeconds))
                 .build();
 
         incident = incidentRepository.save(incident);
         log.info("Incident created: id={}", incident.getId());
+
+        // The driver's phone learns its incident ID at once.
+        emit(IncidentEventMessage.INCIDENT_CREATED, incident, null,
+                data("incidentId", incident.getId().toString(),
+                        "crashEventId", crashEventId.toString()));
 
         // ── Send SMS to emergency contacts ──
         if (!contacts.isEmpty()) {
@@ -81,7 +140,7 @@ public class DispatchOrchestrator {
         }
 
         // ── Dispatch to nearest responder ──
-        dispatchToNearest(incident, Collections.emptyList());
+        dispatchToNearest(incident.getId());
     }
 
     // ═══════════════════════════════════════════════════
@@ -102,35 +161,36 @@ public class DispatchOrchestrator {
             return;
         }
 
-        // Cancel escalation timer
+        // Close it first. If it is already over (resolved), nothing below should happen.
+        int closed = incidentRepository.cancelIfActive(incident.getId(), IncidentService.ACTIVE,
+                IncidentStatus.CANCELLED_BY_USER, Instant.now());
+        if (closed == 0) {
+            log.info("Incident {} is already {} — cancel ignored", incident.getId(), incident.getStatus());
+            return;
+        }
+
         escalationTimerService.cancelTimer(incident.getId());
 
-        // Stand down assigned responder
-        if (incident.getAssignedResponderId() != null) {
-            notificationService.sendStandDownPush(incident.getAssignedResponderId(), incident.getId());
-            spatialQueryService.markResponderOnDuty(incident.getAssignedResponderId());
-            try {
-                authServiceClient.updateResponderStatus(incident.getAssignedResponderId(), "ON_DUTY");
-            } catch (Exception e) {
-                log.warn("Could not reset responder status via Auth: {}", e.getMessage());
-            }
+        // Stand down the offered/assigned responder
+        UUID responderId = incident.getAssignedResponderId();
+        if (responderId != null) {
+            notificationService.sendStandDownPush(responderId, incident.getId());
+            spatialQueryService.markResponderOnDuty(responderId);
+            updateAuthStatus(responderId, "ON_DUTY");
+            emit(IncidentEventMessage.INCIDENT_STAND_DOWN, incident, responderId,
+                    data("incidentId", incident.getId().toString(), "reason", REASON_DRIVER_CANCELLED));
         }
 
         // Send false alarm SMS to emergency contacts
         UUID driverId = incident.getDriverId();
         if (driverId != null) {
             List<EmergencyContactDto> contacts = authServiceClient.getEmergencyContacts(driverId);
-            if (!contacts.isEmpty()) {
+            if (contacts != null && !contacts.isEmpty()) {
                 notificationService.sendFalseAlarmSms(contacts, incident.getDriverName());
             }
         }
 
-        // Close the incident
-        incident.setStatus(IncidentStatus.CANCELLED_BY_USER);
-        incident.setResolvedAt(Instant.now());
-        incidentRepository.save(incident);
         gpsStreamingService.cleanupIncident(incident.getId().toString());
-
         log.info("Incident {} cancelled by user", incident.getId());
     }
 
@@ -139,172 +199,225 @@ public class DispatchOrchestrator {
     // ═══════════════════════════════════════════════════
 
     @Transactional
-    public DispatchAckResponse acceptDispatch(UUID incidentId, String responderId) {
+    public DispatchAckResponse acceptDispatch(UUID incidentId, UUID responderId) {
         Incident incident = findIncident(incidentId);
-        UUID responderUuid = UUID.fromString(responderId);
+        requireOfferedTo(incident, responderId);
+
+        int won = incidentRepository.acceptOffer(incidentId, responderId,
+                IncidentStatus.DISPATCHED, IncidentStatus.ACCEPTED, Instant.now());
+        if (won == 0) {
+            throw new InvalidIncidentStateException(
+                    "The offer is no longer open (it timed out, was cancelled or was already answered)");
+        }
 
         escalationTimerService.cancelTimer(incidentId);
-
-        incident.setStatus(IncidentStatus.ACCEPTED);
-        incident.setAssignedResponderId(responderUuid);
-        incident.setAcceptedAt(Instant.now());
-        incidentRepository.save(incident);
-
-        // Mark the dispatch attempt as ACCEPTED
-        markAttemptResponse(incidentId, responderUuid, DispatchResponseType.ACCEPTED);
+        markAttemptResponse(incidentId, responderId, DispatchResponseType.ACCEPTED);
 
         // Update responder status to ON_MISSION
-        spatialQueryService.markResponderOnMission(responderUuid);
-        try {
-            authServiceClient.updateResponderStatus(responderUuid, "ON_MISSION");
-        } catch (Exception e) {
-            log.warn("Could not update responder status in Auth: {}", e.getMessage());
-        }
+        spatialQueryService.markResponderOnMission(responderId);
+        updateAuthStatus(responderId, "ON_MISSION");
+
+        Map<String, Object> responder = data(
+                "name", incident.getResponderName(),
+                "phone", incident.getResponderPhone(),
+                "vehicleId", incident.getResponderVehicleId());
+        emit(IncidentEventMessage.INCIDENT_ACCEPTED, incident, responderId,
+                data("incidentId", incidentId.toString(), "responder", responder));
 
         log.info("Dispatch ACCEPTED: incident={}, responder={}", incidentId, responderId);
 
-        return DispatchAckResponse.builder()
-                .incidentId(incidentId.toString())
-                .status("ACCEPTED")
-                .message("Dispatch accepted. GPS streaming enabled.")
-                .build();
+        return ack(incidentId, "ACCEPTED", "Dispatch accepted. GPS streaming enabled.");
     }
 
     @Transactional
-    public DispatchAckResponse rejectDispatch(UUID incidentId, String responderId) {
+    public DispatchAckResponse rejectDispatch(UUID incidentId, UUID responderId) {
         Incident incident = findIncident(incidentId);
-        UUID responderUuid = UUID.fromString(responderId);
+        requireOfferedTo(incident, responderId);
 
-        escalationTimerService.cancelTimer(incidentId);
-        markAttemptResponse(incidentId, responderUuid, DispatchResponseType.REJECTED);
+        if (!releaseOffer(incident, responderId, DispatchResponseType.REJECTED)) {
+            throw new InvalidIncidentStateException(
+                    "The offer is no longer open (it timed out, was cancelled or was already answered)");
+        }
 
         log.info("Dispatch REJECTED by responder={} for incident={}", responderId, incidentId);
 
         // Immediately escalate to next responder
-        List<UUID> excludedIds = getAttemptedResponderIds(incidentId);
-        dispatchToNearest(incident, excludedIds);
+        dispatchToNearest(incidentId);
 
-        return DispatchAckResponse.builder()
-                .incidentId(incidentId.toString())
-                .status("REJECTED")
-                .message("Dispatch rejected. Escalating to next responder.")
-                .build();
+        return ack(incidentId, "REJECTED", "Dispatch rejected. Escalating to next responder.");
     }
 
     @Transactional
-    public DispatchAckResponse updateIncidentStatus(UUID incidentId, IncidentStatus newStatus,
-                                                     String hospitalId) {
+    public DispatchAckResponse updateIncidentStatus(UUID incidentId, UUID responderId,
+                                                    IncidentStatus newStatus, String hospitalId) {
         Incident incident = findIncident(incidentId);
 
-        switch (newStatus) {
-            case ARRIVED -> {
-                incident.setStatus(IncidentStatus.ARRIVED);
-                incident.setArrivedAt(Instant.now());
-            }
-            case EN_ROUTE_HOSPITAL -> {
-                incident.setStatus(IncidentStatus.EN_ROUTE_HOSPITAL);
-                incident.setEnRouteAt(Instant.now());
-                if (hospitalId != null) incident.setHospitalId(hospitalId);
-                notificationService.sendHospitalPreAlert(
-                        hospitalId, incidentId,
-                        incident.getBloodType(), incident.getAllergies(), "Calculating...");
-            }
-            case RESOLVED -> {
-                incident.setStatus(IncidentStatus.RESOLVED);
-                incident.setResolvedAt(Instant.now());
-                gpsStreamingService.cleanupIncident(incidentId.toString());
-                if (incident.getAssignedResponderId() != null) {
-                    spatialQueryService.markResponderOnDuty(incident.getAssignedResponderId());
-                    try {
-                        authServiceClient.updateResponderStatus(
-                                incident.getAssignedResponderId(), "ON_DUTY");
-                    } catch (Exception e) {
-                        log.warn("Could not reset responder in Auth: {}", e.getMessage());
-                    }
-                }
-            }
-            default -> throw new IllegalArgumentException("Invalid status transition: " + newStatus);
+        if (!responderId.equals(incident.getAssignedResponderId())) {
+            throw new IncidentAccessDeniedException("You are not the responder assigned to this incident");
         }
 
-        incidentRepository.save(incident);
+        Instant now = Instant.now();
+        int won;
+        switch (newStatus) {
+            case ARRIVED -> won = incidentRepository.markArrived(incidentId, responderId,
+                    IncidentStatus.ACCEPTED, IncidentStatus.ARRIVED, now);
+            case EN_ROUTE_HOSPITAL -> won = incidentRepository.markEnRoute(incidentId, responderId,
+                    IncidentStatus.ARRIVED, IncidentStatus.EN_ROUTE_HOSPITAL, now, hospitalId);
+            case RESOLVED -> won = incidentRepository.markResolved(incidentId, responderId,
+                    List.of(IncidentStatus.ARRIVED, IncidentStatus.EN_ROUTE_HOSPITAL),
+                    IncidentStatus.RESOLVED, now);
+            default -> throw new IllegalArgumentException("Status " + newStatus
+                    + " cannot be set here. Use ARRIVED, EN_ROUTE_HOSPITAL or RESOLVED.");
+        }
+
+        if (won == 0) {
+            throw new InvalidIncidentStateException(
+                    "Cannot move this incident from " + incident.getStatus() + " to " + newStatus);
+        }
+
+        if (newStatus == IncidentStatus.EN_ROUTE_HOSPITAL) {
+            notificationService.sendHospitalPreAlert(
+                    hospitalId, incidentId,
+                    incident.getBloodType(), incident.getAllergies(), "Calculating...");
+        } else if (newStatus == IncidentStatus.RESOLVED) {
+            gpsStreamingService.cleanupIncident(incidentId.toString());
+            spatialQueryService.markResponderOnDuty(responderId);
+            updateAuthStatus(responderId, "ON_DUTY");
+        }
+
+        emit(IncidentEventMessage.INCIDENT_STATUS, incident, responderId,
+                data("incidentId", incidentId.toString(), "status", newStatus.name()));
+
         log.info("Incident {} status → {}", incidentId, newStatus);
 
-        return DispatchAckResponse.builder()
-                .incidentId(incidentId.toString())
-                .status(newStatus.name())
-                .message("Incident status updated.")
-                .build();
+        return ack(incidentId, newStatus.name(), "Incident status updated.");
     }
 
     @Transactional
-    public void markBystanderAssisting(UUID incidentId) {
+    public DispatchAckResponse markBystanderAssisting(UUID incidentId, Viewer viewer) {
         Incident incident = findIncident(incidentId);
-        incident.setBystanderAssisting(true);
-        incidentRepository.save(incident);
+
+        if (!viewer.canSee(incident)) {
+            throw new IncidentAccessDeniedException("This incident does not belong to you");
+        }
+        if (!IncidentService.ACTIVE.contains(incident.getStatus())) {
+            throw new InvalidIncidentStateException("Incident is already " + incident.getStatus());
+        }
+
+        // Only the first tap tells the responder; later taps are accepted quietly.
+        int first = incidentRepository.markBystanderAssisting(incidentId, IncidentService.ACTIVE);
+        if (first == 1) {
+            emit(IncidentEventMessage.BYSTANDER_ASSISTING, incident, incident.getAssignedResponderId(),
+                    data("incidentId", incidentId.toString()));
+        }
         log.info("Bystander assisting at incident={}", incidentId);
+
+        return ack(incidentId, "BYSTANDER_NOTIFIED", "Dispatchers notified that a bystander is assisting.");
     }
 
     // ═══════════════════════════════════════════════════
     //  DISPATCH ENGINE
     // ═══════════════════════════════════════════════════
 
-    void dispatchToNearest(Incident incident, List<UUID> excludedResponderIds) {
-        ResponderLocation nearest = spatialQueryService.findNearestResponder(
-                incident.getGpsLat(), incident.getGpsLng(), excludedResponderIds);
+    /**
+     * Find the best responder and give them a 30-second offer.
+     * Safe to call from any thread: if the incident is no longer DISPATCHING it does nothing,
+     * and the final "claim" is a conditional update that only one caller can win.
+     */
+    void dispatchToNearest(UUID incidentId) {
+        Incident incident = incidentRepository.findById(incidentId).orElse(null);
+        if (incident == null || incident.getStatus() != IncidentStatus.DISPATCHING) {
+            log.info("Incident {} is not waiting for a responder — nothing to dispatch", incidentId);
+            return;
+        }
 
+        Instant now = Instant.now();
+
+        // Too old: stop ringing people about a crash nobody is answering.
+        if (incident.getCreatedAt() != null
+                && now.isAfter(incident.getCreatedAt().plus(giveUpMinutes, ChronoUnit.MINUTES))) {
+            incidentRepository.stopRetrying(incidentId, IncidentStatus.DISPATCHING);
+            log.warn("Incident {} is older than {} minutes with no accepted responder — giving up",
+                    incidentId, giveUpMinutes);
+            return;
+        }
+
+        announceNoResponderIfDue(incident, now);
+
+        ResponderLocation nearest = pickResponder(incident);
         if (nearest == null) {
-            log.error("No available responders for incident={} — all exhausted", incident.getId());
-            incident.setStatus(IncidentStatus.DISPATCHING);
-            incidentRepository.save(incident);
+            incidentRepository.scheduleRetry(incidentId, IncidentStatus.DISPATCHING,
+                    now.plusSeconds(retryIntervalSeconds));
+            log.warn("No responder free for incident={} — will try again in {} seconds",
+                    incidentId, retryIntervalSeconds);
+            return;
+        }
+
+        Instant expiresAt = now.plusSeconds(offerSeconds);
+        int claimed = incidentRepository.claimOffer(incidentId,
+                IncidentStatus.DISPATCHING, IncidentStatus.DISPATCHED,
+                nearest.getResponderId(), nearest.getUserName(), nearest.getPhone(),
+                nearest.getVehicleId(), expiresAt);
+        if (claimed == 0) {
+            log.info("Incident {} changed while choosing a responder (cancelled or already offered)", incidentId);
             return;
         }
 
         // Create dispatch attempt
-        int attemptNum = attemptRepository.countByIncidentId(incident.getId()) + 1;
-        DispatchAttempt attempt = DispatchAttempt.builder()
-                .incidentId(incident.getId())
+        int attemptNum = attemptRepository.countByIncidentId(incidentId) + 1;
+        attemptRepository.save(DispatchAttempt.builder()
+                .incidentId(incidentId)
                 .responderId(nearest.getResponderId())
                 .attemptNumber(attemptNum)
-                .sentAt(Instant.now())
+                .sentAt(now)
                 .response(DispatchResponseType.PENDING)
-                .build();
-        attemptRepository.save(attempt);
-
-        incident.setStatus(IncidentStatus.DISPATCHED);
-        incident.setAssignedResponderId(nearest.getResponderId());
-        incidentRepository.save(incident);
+                .build());
 
         // Send push notification
         notificationService.sendResponderPush(
                 nearest.getResponderId(), nearest.getVehicleId(),
-                incident.getId(), incident.getDriverName(),
+                incidentId, incident.getDriverName(),
                 incident.getGpsLat(), incident.getGpsLng(),
-                incident.getPriorityScore());
+                incident.getPriorityScore() != null ? incident.getPriorityScore() : 0);
 
-        // Start 30-second escalation timer
-        final UUID incidentId = incident.getId();
-        escalationTimerService.startEscalationTimer(incidentId, () -> onEscalationTimeout(incidentId));
+        // Start the live 30-second timer (the sweep covers a restart)
+        final UUID responderId = nearest.getResponderId();
+        escalationTimerService.startEscalationTimer(incidentId, offerSeconds,
+                () -> onOfferTimeout(incidentId, responderId));
 
-        log.info("Dispatched to responder {} (attempt #{}), incident={}",
-                nearest.getResponderId(), attemptNum, incidentId);
+        emit(IncidentEventMessage.INCIDENT_OFFERED, incident, responderId,
+                data("incidentId", incidentId.toString(),
+                        "dispatchExpiresAt", expiresAt.toString(),
+                        "driverName", incident.getDriverName(),
+                        "gpsLat", incident.getGpsLat(),
+                        "gpsLng", incident.getGpsLng(),
+                        "priorityScore", incident.getPriorityScore(),
+                        "bloodType", incident.getBloodType(),
+                        "allergies", incident.getAllergies(),
+                        "attempt", attemptNum));
+
+        log.info("Dispatched to responder {} (attempt #{}), incident={}", responderId, attemptNum, incidentId);
     }
 
-    void onEscalationTimeout(UUID incidentId) {
+    /**
+     * The offer's time is over. Called by the live timer and by the sweep.
+     * If the responder already answered (or the driver cancelled), the conditional update loses
+     * and nothing happens.
+     */
+    public void onOfferTimeout(UUID incidentId, UUID responderId) {
         Incident incident = incidentRepository.findById(incidentId).orElse(null);
-        if (incident == null || incident.getStatus() == IncidentStatus.ACCEPTED) {
-            return; // Already accepted or resolved
+        if (incident == null) {
+            return;
         }
-
-        // Mark current attempt as TIMED_OUT
-        if (incident.getAssignedResponderId() != null) {
-            markAttemptResponse(incidentId, incident.getAssignedResponderId(),
-                    DispatchResponseType.TIMED_OUT);
+        if (releaseOffer(incident, responderId, DispatchResponseType.TIMED_OUT)) {
+            log.info("Offer to responder={} timed out for incident={} — escalating", responderId, incidentId);
+            dispatchToNearest(incidentId);
         }
+    }
 
-        log.info("Escalation triggered for incident={}", incidentId);
-
-        List<UUID> excludedIds = getAttemptedResponderIds(incidentId);
-        dispatchToNearest(incident, excludedIds);
+    /** Called by the sweep when an incident is waiting for another try. */
+    public void retryDispatch(UUID incidentId) {
+        dispatchToNearest(incidentId);
     }
 
     // ═══════════════════════════════════════════════════
@@ -316,10 +429,83 @@ public class DispatchOrchestrator {
                 .orElseThrow(() -> new IncidentNotFoundException("Incident not found: " + incidentId));
     }
 
-    private List<UUID> getAttemptedResponderIds(UUID incidentId) {
-        return attemptRepository.findByIncidentIdOrderByAttemptNumber(incidentId).stream()
-                .map(DispatchAttempt::getResponderId)
-                .toList();
+    /**
+     * 403 if this incident was never offered to the caller.
+     * 409 if it WAS offered to them but the offer is over, or the incident has moved on.
+     */
+    private void requireOfferedTo(Incident incident, UUID responderId) {
+        if (!responderId.equals(incident.getAssignedResponderId())) {
+            if (attemptRepository.existsByIncidentIdAndResponderId(incident.getId(), responderId)) {
+                throw new InvalidIncidentStateException(
+                        "Your offer for this incident is over (incident is " + incident.getStatus() + ")");
+            }
+            throw new IncidentAccessDeniedException("This incident was not offered to you");
+        }
+        if (incident.getStatus() != IncidentStatus.DISPATCHED) {
+            throw new InvalidIncidentStateException(
+                    "Incident is " + incident.getStatus() + ", it is not waiting for an answer");
+        }
+    }
+
+    /**
+     * DISPATCHED -> DISPATCHING for this responder (reject or time-out).
+     * Returns false if somebody else got there first.
+     */
+    private boolean releaseOffer(Incident incident, UUID responderId, DispatchResponseType reason) {
+        UUID incidentId = incident.getId();
+        int won = incidentRepository.releaseOffer(incidentId, responderId,
+                IncidentStatus.DISPATCHED, IncidentStatus.DISPATCHING,
+                Instant.now().plusSeconds(safetyRetrySeconds));
+        if (won == 0) {
+            return false;
+        }
+        escalationTimerService.cancelTimer(incidentId);
+        markAttemptResponse(incidentId, responderId, reason);
+        emit(IncidentEventMessage.INCIDENT_OFFER_EXPIRED, incident, responderId,
+                data("incidentId", incidentId.toString()));
+        return true;
+    }
+
+    /**
+     * Nearest responder nobody has asked yet. If everybody was asked, nearest responder who did not
+     * REJECT (someone who only let it time out may be free now). Null if there is nobody.
+     */
+    private ResponderLocation pickResponder(Incident incident) {
+        if (incident.getGpsLat() == null || incident.getGpsLng() == null) {
+            log.error("Incident {} has no GPS position — cannot choose a responder", incident.getId());
+            return null;
+        }
+
+        List<DispatchAttempt> attempts = attemptRepository.findByIncidentIdOrderByAttemptNumber(incident.getId());
+        Set<UUID> asked = new LinkedHashSet<>();
+        Set<UUID> rejected = new LinkedHashSet<>();
+        for (DispatchAttempt a : attempts) {
+            asked.add(a.getResponderId());
+            if (a.getResponse() == DispatchResponseType.REJECTED) {
+                rejected.add(a.getResponderId());
+            }
+        }
+
+        ResponderLocation nearest = spatialQueryService.findNearestResponder(
+                incident.getGpsLat(), incident.getGpsLng(), new ArrayList<>(asked));
+        if (nearest == null && rejected.size() < asked.size()) {
+            nearest = spatialQueryService.findNearestResponder(
+                    incident.getGpsLat(), incident.getGpsLng(), new ArrayList<>(rejected));
+        }
+        return nearest;
+    }
+
+    /** 2 minutes without an accept: tell the driver once. Dispatch keeps trying. */
+    private void announceNoResponderIfDue(Incident incident, Instant now) {
+        if (incident.getCreatedAt() == null
+                || now.isBefore(incident.getCreatedAt().plusSeconds(noResponderAfterSeconds))) {
+            return;
+        }
+        if (incidentRepository.markNoResponderNotified(incident.getId(), IncidentStatus.DISPATCHING) == 1) {
+            log.warn("Nobody accepted incident {} for {} seconds", incident.getId(), noResponderAfterSeconds);
+            emit(IncidentEventMessage.NO_RESPONDER_AVAILABLE, incident, null,
+                    data("incidentId", incident.getId().toString()));
+        }
     }
 
     private void markAttemptResponse(UUID incidentId, UUID responderId, DispatchResponseType response) {
@@ -332,6 +518,35 @@ public class DispatchOrchestrator {
                     a.setRespondedAt(Instant.now());
                     attemptRepository.save(a);
                 });
+    }
+
+    private void updateAuthStatus(UUID userId, String status) {
+        try {
+            authServiceClient.updateResponderStatus(userId, status);
+        } catch (Exception e) {
+            log.warn("Could not set responder {} to {} in Auth: {}", userId, status, e.getMessage());
+        }
+    }
+
+    private void emit(String type, Incident incident, UUID responderId, Map<String, Object> data) {
+        eventPublisher.publish(type, incident, responderId, data);
+    }
+
+    /** Key/value pairs into a map that allows null values (Map.of does not). */
+    private static Map<String, Object> data(Object... keysAndValues) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        for (int i = 0; i + 1 < keysAndValues.length; i += 2) {
+            map.put((String) keysAndValues[i], keysAndValues[i + 1]);
+        }
+        return map;
+    }
+
+    private static DispatchAckResponse ack(UUID incidentId, String status, String message) {
+        return DispatchAckResponse.builder()
+                .incidentId(incidentId.toString())
+                .status(status)
+                .message(message)
+                .build();
     }
 
     private MedicalProfileDto fallbackProfile() {

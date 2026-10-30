@@ -47,8 +47,24 @@ public class Incident {
     @Column(nullable = false)
     private IncidentStatus status;
 
+    /**
+     * The responder's USER id (the same id they send in X-User-Id).
+     * While status is DISPATCHED this is the OFFERED responder.
+     * From ACCEPTED onwards it is the ASSIGNED responder.
+     * It is null while DISPATCHING (nobody is holding the incident).
+     */
     @Column(name = "assigned_responder_id")
     private UUID assignedResponderId;
+
+    /** Snapshot of the offered/assigned responder, taken when the offer is made. */
+    @Column(name = "responder_name")
+    private String responderName;
+
+    @Column(name = "responder_phone")
+    private String responderPhone;
+
+    @Column(name = "responder_vehicle_id")
+    private String responderVehicleId;
 
     @Column(name = "hospital_id")
     private String hospitalId;
@@ -63,6 +79,19 @@ public class Incident {
     @Column(name = "bystander_assisting")
     @Builder.Default
     private Boolean bystanderAssisting = false;
+
+    /** When the current offer ends. Set only while status is DISPATCHED. */
+    @Column(name = "dispatch_expires_at")
+    private Instant dispatchExpiresAt;
+
+    /** When the sweep should try to find a responder again. Set only while status is DISPATCHING. */
+    @Column(name = "next_retry_at")
+    private Instant nextRetryAt;
+
+    /** True once NO_RESPONDER_AVAILABLE has been announced (so it is sent only once). */
+    @Column(name = "no_responder_notified")
+    @Builder.Default
+    private Boolean noResponderNotified = false;
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

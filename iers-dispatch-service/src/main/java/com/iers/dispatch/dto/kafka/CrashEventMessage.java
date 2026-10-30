@@ -18,5 +18,7 @@ public class CrashEventMessage {
     private Integer priorityScore;
     private String source;
     private String reason;
+    /** PHASE 2: end of the 10-second cancel window (only on CRASH_PENDING). */
+    private Instant windowEndsAt;
     private Instant timestamp;
 }
