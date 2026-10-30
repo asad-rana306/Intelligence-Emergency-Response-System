@@ -1,5 +1,6 @@
 package com.iers.dispatch.service;
 
+import com.iers.dispatch.dto.Viewer;
 import com.iers.dispatch.dto.feign.EmergencyContactDto;
 import com.iers.dispatch.dto.feign.MedicalProfileDto;
 import com.iers.dispatch.dto.kafka.CrashEventMessage;
@@ -9,7 +10,11 @@ import com.iers.dispatch.entity.Incident;
 import com.iers.dispatch.entity.ResponderLocation;
 import com.iers.dispatch.entity.enums.DispatchResponseType;
 import com.iers.dispatch.entity.enums.IncidentStatus;
+import com.iers.dispatch.exception.IncidentAccessDeniedException;
+import com.iers.dispatch.exception.IncidentNotFoundException;
+import com.iers.dispatch.exception.InvalidIncidentStateException;
 import com.iers.dispatch.feign.AuthServiceClient;
+import com.iers.dispatch.kafka.IncidentEventPublisher;
 import com.iers.dispatch.repository.DispatchAttemptRepository;
 import com.iers.dispatch.repository.IncidentRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +22,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -38,244 +45,771 @@ class DispatchOrchestratorTest {
     @Mock private EscalationTimerService escalationTimerService;
     @Mock private NotificationService notificationService;
     @Mock private GpsStreamingService gpsStreamingService;
+    @Mock private IncidentEventPublisher eventPublisher;
+
+    @Captor private ArgumentCaptor<Map<String, Object>> dataCaptor;
 
     @InjectMocks private DispatchOrchestrator orchestrator;
 
-    private CrashEventMessage crashEvent;
-    private ResponderLocation nearestResponder;
     private final UUID incidentId = UUID.randomUUID();
-    private final UUID responderId = UUID.randomUUID();
+    private final UUID crashId = UUID.randomUUID();
     private final UUID driverId = UUID.randomUUID();
+    private final UUID responderId = UUID.randomUUID();   // A: the first responder
+    private final UUID otherResponderId = UUID.randomUUID(); // B: the next responder
+
+    private CrashEventMessage crashEvent;
+    private ResponderLocation responderA;
+    private ResponderLocation responderB;
+    private Incident saved; // what the fake save() stores
 
     @BeforeEach
     void setUp() {
         crashEvent = CrashEventMessage.builder()
                 .eventType("CRASH_DETECTED")
-                .crashEventId(UUID.randomUUID().toString())
+                .crashEventId(crashId.toString())
                 .driverId(driverId.toString())
-                .driverName("John Doe")
-                .driverPhone("+14155551234")
+                .driverName("John Doe").driverPhone("+14155551234")
                 .gpsLat(37.7749).gpsLng(-122.4194)
                 .priorityScore(4).source("HTTP")
                 .timestamp(Instant.now()).build();
 
-        nearestResponder = ResponderLocation.builder()
-                .responderId(responderId)
-                .userName("Responder A").vehicleId("AMB-001")
-                .latitude(37.78).longitude(-122.42)
-                .dutyStatus("ON_DUTY").build();
+        responderA = ResponderLocation.builder()
+                .responderId(responderId).userName("Responder A").phone("+923001111111")
+                .vehicleId("AMB-001").latitude(37.78).longitude(-122.42).dutyStatus("ON_DUTY").build();
+        responderB = ResponderLocation.builder()
+                .responderId(otherResponderId).userName("Responder B").phone("+923002222222")
+                .vehicleId("AMB-002").latitude(37.79).longitude(-122.43).dutyStatus("ON_DUTY").build();
+    }
+
+    // ─────────────── helpers ───────────────
+
+    private Incident incident(IncidentStatus status, UUID assigned) {
+        return Incident.builder()
+                .id(incidentId).crashEventId(crashId).driverId(driverId)
+                .driverName("John Doe").driverPhone("+14155551234").priorityScore(4)
+                .gpsLat(37.7749).gpsLng(-122.4194).status(status)
+                .assignedResponderId(assigned)
+                .responderName("Responder A").responderPhone("+923001111111").responderVehicleId("AMB-001")
+                .bloodType("O+").allergies("Penicillin")
+                .createdAt(Instant.now()).build();
+    }
+
+    private void stubFindById(Incident incident) {
+        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(incident));
+    }
+
+    private void stubClaim(int result) {
+        when(incidentRepository.claimOffer(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(result);
+    }
+
+    private DispatchAttempt pendingAttempt(UUID forResponder) {
+        return DispatchAttempt.builder().incidentId(incidentId).responderId(forResponder)
+                .attemptNumber(1).response(DispatchResponseType.PENDING).build();
+    }
+
+    /** Fake save(): gives the incident an id and remembers it, like the database would. */
+    private void stubSaveAndFind() {
+        when(incidentRepository.save(any(Incident.class))).thenAnswer(inv -> {
+            saved = inv.getArgument(0);
+            saved.setId(incidentId);
+            return saved;
+        });
+        when(incidentRepository.findById(incidentId)).thenAnswer(inv -> Optional.of(saved));
     }
 
     // ══════════════════ CRASH_DETECTED ══════════════════
 
     @Test
-    @DisplayName("handleCrashDetected — creates incident, fetches profile, dispatches")
+    @DisplayName("handleCrashDetected — creates incident, announces it, offers it to the nearest responder")
     void handleCrashDetected_fullPipeline() {
-        MedicalProfileDto profile = MedicalProfileDto.builder()
-                .bloodType("O+").allergies("Penicillin").build();
-
         List<EmergencyContactDto> contacts = List.of(
                 EmergencyContactDto.builder().contactName("Mom").phone("+1111").build());
-
-        when(authServiceClient.getMedicalProfile(driverId)).thenReturn(profile);
+        when(authServiceClient.getMedicalProfile(driverId)).thenReturn(
+                MedicalProfileDto.builder().bloodType("O+").allergies("Penicillin").build());
         when(authServiceClient.getEmergencyContacts(driverId)).thenReturn(contacts);
-        when(incidentRepository.save(any(Incident.class))).thenAnswer(inv -> {
-            Incident i = inv.getArgument(0);
-            i.setId(incidentId);
-            return i;
-        });
-        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList()))
-                .thenReturn(nearestResponder);
-        when(attemptRepository.countByIncidentId(any())).thenReturn(0);
-        when(attemptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        stubSaveAndFind();
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(responderA);
+        stubClaim(1);
 
         orchestrator.handleCrashDetected(crashEvent);
 
-        // Verify incident was created with medical data
+        // The incident was created with the medical snapshot and a safety retry time
         ArgumentCaptor<Incident> captor = ArgumentCaptor.forClass(Incident.class);
-        verify(incidentRepository, atLeast(1)).save(captor.capture());
-        Incident saved = captor.getAllValues().get(0);
-        assertThat(saved.getBloodType()).isEqualTo("O+");
-        assertThat(saved.getDriverName()).isEqualTo("John Doe");
+        verify(incidentRepository).save(captor.capture());
+        Incident created = captor.getValue();
+        assertThat(created.getBloodType()).isEqualTo("O+");
+        assertThat(created.getDriverName()).isEqualTo("John Doe");
+        assertThat(created.getStatus()).isEqualTo(IncidentStatus.DISPATCHING);
+        assertThat(created.getNextRetryAt()).isNotNull();
 
-        // Verify SMS sent to contacts
+        // Announced: created, then offered
+        InOrder order = inOrder(eventPublisher);
+        order.verify(eventPublisher).publish(eq("INCIDENT_CREATED"), any(Incident.class), isNull(), dataCaptor.capture());
+        assertThat(dataCaptor.getValue()).containsEntry("incidentId", incidentId.toString())
+                .containsEntry("crashEventId", crashId.toString());
+        order.verify(eventPublisher).publish(eq("INCIDENT_OFFERED"), any(Incident.class), eq(responderId), dataCaptor.capture());
+        Map<String, Object> offered = dataCaptor.getValue();
+        assertThat(offered).containsEntry("driverName", "John Doe")
+                .containsEntry("bloodType", "O+")
+                .containsEntry("allergies", "Penicillin")
+                .containsEntry("priorityScore", 4)
+                .containsEntry("attempt", 1);
+        assertThat(offered.get("dispatchExpiresAt")).isInstanceOf(String.class);
+
         verify(notificationService).sendEmergencySms(eq(contacts), eq("John Doe"), any());
-
-        // Verify push sent to responder
         verify(notificationService).sendResponderPush(eq(responderId), eq("AMB-001"),
-                any(), eq("John Doe"), anyDouble(), anyDouble(), eq(4));
-
-        // Verify escalation timer started
-        verify(escalationTimerService).startEscalationTimer(any(), any());
+                eq(incidentId), eq("John Doe"), eq(37.7749), eq(-122.4194), eq(4));
+        verify(incidentRepository).claimOffer(eq(incidentId), eq(IncidentStatus.DISPATCHING),
+                eq(IncidentStatus.DISPATCHED), eq(responderId), eq("Responder A"), eq("+923001111111"),
+                eq("AMB-001"), any(Instant.class));
+        verify(attemptRepository).save(any(DispatchAttempt.class));
+        verify(escalationTimerService).startEscalationTimer(eq(incidentId), eq(30L), any(Runnable.class));
     }
 
     @Test
-    @DisplayName("handleCrashDetected — works with fallback when Auth is down")
+    @DisplayName("handleCrashDetected — a repeated Kafka message does not create a second incident")
+    void handleCrashDetected_duplicate() {
+        when(incidentRepository.findByCrashEventId(crashId))
+                .thenReturn(Optional.of(incident(IncidentStatus.DISPATCHED, responderId)));
+
+        orchestrator.handleCrashDetected(crashEvent);
+
+        verify(incidentRepository, never()).save(any());
+        verifyNoInteractions(authServiceClient, eventPublisher, spatialQueryService);
+    }
+
+    @Test
+    @DisplayName("handleCrashDetected — Auth down: medical UNKNOWN, no SMS, dispatch still happens")
     void handleCrashDetected_authDown_fallback() {
         when(authServiceClient.getMedicalProfile(driverId)).thenReturn(
                 MedicalProfileDto.builder().bloodType("UNKNOWN").allergies("UNKNOWN").build());
         when(authServiceClient.getEmergencyContacts(driverId)).thenReturn(Collections.emptyList());
-        when(incidentRepository.save(any())).thenAnswer(inv -> {
-            Incident i = inv.getArgument(0);
-            i.setId(incidentId);
-            return i;
-        });
-        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList()))
-                .thenReturn(nearestResponder);
-        when(attemptRepository.countByIncidentId(any())).thenReturn(0);
-        when(attemptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        stubSaveAndFind();
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(responderA);
+        stubClaim(1);
 
         orchestrator.handleCrashDetected(crashEvent);
 
-        // SMS should NOT be sent (empty contacts from fallback)
         verify(notificationService, never()).sendEmergencySms(anyList(), anyString(), any());
-        // But dispatch should still proceed
         verify(notificationService).sendResponderPush(any(), any(), any(), any(), anyDouble(), anyDouble(), anyInt());
+    }
+
+    @Test
+    @DisplayName("handleCrashDetected — crash without a driver id still gets an incident")
+    void handleCrashDetected_noDriver() {
+        crashEvent.setDriverId(null);
+        stubSaveAndFind();
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(responderA);
+        stubClaim(1);
+
+        orchestrator.handleCrashDetected(crashEvent);
+
+        assertThat(saved.getBloodType()).isEqualTo("UNKNOWN");
+        verifyNoInteractions(authServiceClient);
+        verify(notificationService).sendResponderPush(any(), any(), any(), any(), anyDouble(), anyDouble(), anyInt());
+    }
+
+    @Test
+    @DisplayName("handleCrashDetected — nobody free: no push, a retry is scheduled")
+    void handleCrashDetected_noResponder() {
+        when(authServiceClient.getMedicalProfile(driverId)).thenReturn(
+                MedicalProfileDto.builder().bloodType("O+").allergies("None").build());
+        when(authServiceClient.getEmergencyContacts(driverId)).thenReturn(Collections.emptyList());
+        stubSaveAndFind();
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(null);
+
+        orchestrator.handleCrashDetected(crashEvent);
+
+        verify(incidentRepository).scheduleRetry(eq(incidentId), eq(IncidentStatus.DISPATCHING), any(Instant.class));
+        verify(incidentRepository, never()).claimOffer(any(), any(), any(), any(), any(), any(), any(), any());
+        verifyNoInteractions(escalationTimerService, notificationService);
+        // the driver still learns the incident exists
+        verify(eventPublisher).publish(eq("INCIDENT_CREATED"), any(Incident.class), isNull(), anyMap());
+    }
+
+    // ══════════════════ DISPATCH ENGINE ══════════════════
+
+    @Test
+    @DisplayName("dispatchToNearest — an unknown incident is ignored")
+    void dispatch_unknownIncident() {
+        when(incidentRepository.findById(incidentId)).thenReturn(Optional.empty());
+        orchestrator.dispatchToNearest(incidentId);
+        verifyNoInteractions(spatialQueryService, eventPublisher);
+    }
+
+    @Test
+    @DisplayName("dispatchToNearest — an incident that is not DISPATCHING is left alone")
+    void dispatch_wrongState() {
+        stubFindById(incident(IncidentStatus.ACCEPTED, responderId));
+        orchestrator.dispatchToNearest(incidentId);
+        verifyNoInteractions(spatialQueryService, eventPublisher);
+    }
+
+    @Test
+    @DisplayName("dispatchToNearest — cancelled while choosing: the claim loses, nothing is sent")
+    void dispatch_claimLost() {
+        stubFindById(incident(IncidentStatus.DISPATCHING, null));
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(responderA);
+        stubClaim(0);
+
+        orchestrator.dispatchToNearest(incidentId);
+
+        verify(attemptRepository, never()).save(any());
+        verifyNoInteractions(notificationService, escalationTimerService, eventPublisher);
+    }
+
+    @Test
+    @DisplayName("dispatchToNearest — no GPS position: cannot choose, retries later")
+    void dispatch_noGps() {
+        Incident noGps = incident(IncidentStatus.DISPATCHING, null);
+        noGps.setGpsLat(null);
+        stubFindById(noGps);
+
+        orchestrator.dispatchToNearest(incidentId);
+
+        verifyNoInteractions(spatialQueryService);
+        verify(incidentRepository).scheduleRetry(eq(incidentId), eq(IncidentStatus.DISPATCHING), any(Instant.class));
+    }
+
+    @Test
+    @DisplayName("dispatchToNearest — after 2 minutes with no accept, NO_RESPONDER_AVAILABLE is sent once")
+    void dispatch_noResponderAnnounced() {
+        Incident old = incident(IncidentStatus.DISPATCHING, null);
+        old.setCreatedAt(Instant.now().minusSeconds(130));
+        stubFindById(old);
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(null);
+        when(incidentRepository.markNoResponderNotified(incidentId, IncidentStatus.DISPATCHING)).thenReturn(1);
+
+        orchestrator.dispatchToNearest(incidentId);
+
+        verify(eventPublisher).publish(eq("NO_RESPONDER_AVAILABLE"), any(Incident.class), isNull(), anyMap());
+        verify(incidentRepository).scheduleRetry(eq(incidentId), eq(IncidentStatus.DISPATCHING), any(Instant.class));
+    }
+
+    @Test
+    @DisplayName("dispatchToNearest — NO_RESPONDER_AVAILABLE is not repeated")
+    void dispatch_noResponderNotRepeated() {
+        Incident old = incident(IncidentStatus.DISPATCHING, null);
+        old.setCreatedAt(Instant.now().minusSeconds(130));
+        stubFindById(old);
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(null);
+        when(incidentRepository.markNoResponderNotified(incidentId, IncidentStatus.DISPATCHING)).thenReturn(0);
+
+        orchestrator.dispatchToNearest(incidentId);
+
+        verify(eventPublisher, never()).publish(eq("NO_RESPONDER_AVAILABLE"), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("dispatchToNearest — under 2 minutes: no announcement")
+    void dispatch_tooEarlyToAnnounce() {
+        stubFindById(incident(IncidentStatus.DISPATCHING, null));
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(null);
+
+        orchestrator.dispatchToNearest(incidentId);
+
+        verify(incidentRepository, never()).markNoResponderNotified(any(), any());
+    }
+
+    @Test
+    @DisplayName("dispatchToNearest — incident older than 30 minutes: gives up")
+    void dispatch_givesUp() {
+        Incident ancient = incident(IncidentStatus.DISPATCHING, null);
+        ancient.setCreatedAt(Instant.now().minusSeconds(31 * 60));
+        stubFindById(ancient);
+
+        orchestrator.dispatchToNearest(incidentId);
+
+        verify(incidentRepository).stopRetrying(incidentId, IncidentStatus.DISPATCHING);
+        verifyNoInteractions(spatialQueryService, eventPublisher);
+    }
+
+    @Test
+    @DisplayName("dispatchToNearest — asks a responder who timed out again, only when nobody new is left")
+    void dispatch_reofferTimedOut() {
+        stubFindById(incident(IncidentStatus.DISPATCHING, null));
+        DispatchAttempt timedOut = pendingAttempt(responderId);
+        timedOut.setResponse(DispatchResponseType.TIMED_OUT);
+        when(attemptRepository.findByIncidentIdOrderByAttemptNumber(incidentId)).thenReturn(List.of(timedOut));
+        when(attemptRepository.countByIncidentId(incidentId)).thenReturn(1);
+        // first search (skip everybody already asked) finds nobody, second (skip only rejections) finds A
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), eq(List.of(responderId))))
+                .thenReturn(null);
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), eq(List.of())))
+                .thenReturn(responderA);
+        stubClaim(1);
+
+        orchestrator.dispatchToNearest(incidentId);
+
+        verify(eventPublisher).publish(eq("INCIDENT_OFFERED"), any(Incident.class), eq(responderId), dataCaptor.capture());
+        assertThat(dataCaptor.getValue()).containsEntry("attempt", 2);
+    }
+
+    @Test
+    @DisplayName("dispatchToNearest — a responder who rejected is never asked again")
+    void dispatch_neverReofferRejected() {
+        stubFindById(incident(IncidentStatus.DISPATCHING, null));
+        DispatchAttempt rejected = pendingAttempt(responderId);
+        rejected.setResponse(DispatchResponseType.REJECTED);
+        when(attemptRepository.findByIncidentIdOrderByAttemptNumber(incidentId)).thenReturn(List.of(rejected));
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), eq(List.of(responderId))))
+                .thenReturn(null);
+
+        orchestrator.dispatchToNearest(incidentId);
+
+        verify(spatialQueryService, times(1)).findNearestResponder(anyDouble(), anyDouble(), anyList());
+        verify(incidentRepository).scheduleRetry(eq(incidentId), eq(IncidentStatus.DISPATCHING), any(Instant.class));
+    }
+
+    @Test
+    @DisplayName("dispatchToNearest — a missing priority is sent as 0")
+    void dispatch_nullPriority() {
+        Incident noPriority = incident(IncidentStatus.DISPATCHING, null);
+        noPriority.setPriorityScore(null);
+        stubFindById(noPriority);
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(responderA);
+        stubClaim(1);
+
+        orchestrator.dispatchToNearest(incidentId);
+
+        verify(notificationService).sendResponderPush(any(), any(), any(), any(), anyDouble(), anyDouble(), eq(0));
+    }
+
+    @Test
+    @DisplayName("retryDispatch — runs the normal search")
+    void retryDispatch_runsSearch() {
+        stubFindById(incident(IncidentStatus.DISPATCHING, null));
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(responderA);
+        stubClaim(1);
+
+        orchestrator.retryDispatch(incidentId);
+
+        verify(eventPublisher).publish(eq("INCIDENT_OFFERED"), any(Incident.class), eq(responderId), anyMap());
+    }
+
+    // ══════════════════ TIMEOUT ══════════════════
+
+    @Test
+    @DisplayName("onOfferTimeout — marks TIMED_OUT, tells the responder, offers to the next one")
+    void timeout_escalates() {
+        Incident inc = incident(IncidentStatus.DISPATCHED, responderId);
+        stubFindById(inc);
+        when(incidentRepository.releaseOffer(eq(incidentId), eq(responderId), eq(IncidentStatus.DISPATCHED),
+                eq(IncidentStatus.DISPATCHING), any(Instant.class))).thenAnswer(inv -> {
+            inc.setStatus(IncidentStatus.DISPATCHING);
+            return 1;
+        });
+        DispatchAttempt attemptA = pendingAttempt(responderId);
+        when(attemptRepository.findByIncidentIdOrderByAttemptNumber(incidentId)).thenReturn(List.of(attemptA));
+        when(attemptRepository.countByIncidentId(incidentId)).thenReturn(1);
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), eq(List.of(responderId))))
+                .thenReturn(responderB);
+        stubClaim(1);
+
+        orchestrator.onOfferTimeout(incidentId, responderId);
+
+        assertThat(attemptA.getResponse()).isEqualTo(DispatchResponseType.TIMED_OUT);
+        InOrder order = inOrder(eventPublisher);
+        order.verify(eventPublisher).publish(eq("INCIDENT_OFFER_EXPIRED"), any(Incident.class), eq(responderId), anyMap());
+        order.verify(eventPublisher).publish(eq("INCIDENT_OFFERED"), any(Incident.class), eq(otherResponderId), anyMap());
+        verify(notificationService).sendResponderPush(eq(otherResponderId), eq("AMB-002"),
+                any(), any(), anyDouble(), anyDouble(), anyInt());
+    }
+
+    @Test
+    @DisplayName("onOfferTimeout — responder already answered: nothing happens")
+    void timeout_lostRace() {
+        stubFindById(incident(IncidentStatus.ACCEPTED, responderId));
+        when(incidentRepository.releaseOffer(any(), any(), any(), any(), any())).thenReturn(0);
+
+        orchestrator.onOfferTimeout(incidentId, responderId);
+
+        verifyNoInteractions(spatialQueryService, eventPublisher, notificationService);
+    }
+
+    @Test
+    @DisplayName("onOfferTimeout — unknown incident is ignored")
+    void timeout_unknownIncident() {
+        when(incidentRepository.findById(incidentId)).thenReturn(Optional.empty());
+        orchestrator.onOfferTimeout(incidentId, responderId);
+        verify(incidentRepository, never()).releaseOffer(any(), any(), any(), any(), any());
     }
 
     // ══════════════════ CRASH_CANCELLED ══════════════════
 
+    private CrashEventMessage cancelEvent() {
+        return CrashEventMessage.builder().eventType("CRASH_CANCELLED")
+                .crashEventId(crashId.toString()).reason("LATE_CANCEL").build();
+    }
+
     @Test
-    @DisplayName("handleCrashCancelled — stands down responder, sends false alarm SMS")
-    void handleCrashCancelled_standsDown() {
-        Incident incident = Incident.builder()
-                .id(incidentId).crashEventId(UUID.fromString(crashEvent.getCrashEventId()))
-                .driverId(driverId).driverName("John Doe")
-                .assignedResponderId(responderId).status(IncidentStatus.DISPATCHED).build();
-
-        CrashEventMessage cancelEvent = CrashEventMessage.builder()
-                .eventType("CRASH_CANCELLED")
-                .crashEventId(crashEvent.getCrashEventId())
-                .reason("LATE_CANCEL").build();
-
+    @DisplayName("handleCrashCancelled — stands down the responder, tells everyone, sends false-alarm SMS")
+    void cancel_standsDown() {
+        Incident inc = incident(IncidentStatus.DISPATCHED, responderId);
         List<EmergencyContactDto> contacts = List.of(
                 EmergencyContactDto.builder().phone("+1111").contactName("Mom").build());
-
-        when(incidentRepository.findByCrashEventId(any())).thenReturn(Optional.of(incident));
+        when(incidentRepository.findByCrashEventId(crashId)).thenReturn(Optional.of(inc));
+        when(incidentRepository.cancelIfActive(eq(incidentId), anyCollection(),
+                eq(IncidentStatus.CANCELLED_BY_USER), any(Instant.class))).thenReturn(1);
         when(authServiceClient.getEmergencyContacts(driverId)).thenReturn(contacts);
-        when(incidentRepository.save(any())).thenReturn(incident);
 
-        orchestrator.handleCrashCancelled(cancelEvent);
+        orchestrator.handleCrashCancelled(cancelEvent());
 
         verify(escalationTimerService).cancelTimer(incidentId);
         verify(notificationService).sendStandDownPush(responderId, incidentId);
+        verify(spatialQueryService).markResponderOnDuty(responderId);
+        verify(authServiceClient).updateResponderStatus(responderId, "ON_DUTY");
         verify(notificationService).sendFalseAlarmSms(contacts, "John Doe");
-        assertThat(incident.getStatus()).isEqualTo(IncidentStatus.CANCELLED_BY_USER);
+        verify(gpsStreamingService).cleanupIncident(incidentId.toString());
+        verify(eventPublisher).publish(eq("INCIDENT_STAND_DOWN"), any(Incident.class), eq(responderId), dataCaptor.capture());
+        assertThat(dataCaptor.getValue()).containsEntry("reason", "DRIVER_CANCELLED");
+    }
+
+    @Test
+    @DisplayName("handleCrashCancelled — nobody holds the incident yet: no stand-down, SMS still sent")
+    void cancel_noResponderYet() {
+        Incident inc = incident(IncidentStatus.DISPATCHING, null);
+        List<EmergencyContactDto> contacts = List.of(
+                EmergencyContactDto.builder().phone("+1111").contactName("Mom").build());
+        when(incidentRepository.findByCrashEventId(crashId)).thenReturn(Optional.of(inc));
+        when(incidentRepository.cancelIfActive(any(), anyCollection(), any(), any())).thenReturn(1);
+        when(authServiceClient.getEmergencyContacts(driverId)).thenReturn(contacts);
+
+        orchestrator.handleCrashCancelled(cancelEvent());
+
+        verify(notificationService, never()).sendStandDownPush(any(), any());
+        verifyNoInteractions(eventPublisher, spatialQueryService);
+        verify(notificationService).sendFalseAlarmSms(contacts, "John Doe");
+    }
+
+    @Test
+    @DisplayName("handleCrashCancelled — no contacts (Auth down): no SMS")
+    void cancel_noContacts() {
+        Incident inc = incident(IncidentStatus.DISPATCHING, null);
+        when(incidentRepository.findByCrashEventId(crashId)).thenReturn(Optional.of(inc));
+        when(incidentRepository.cancelIfActive(any(), anyCollection(), any(), any())).thenReturn(1);
+        when(authServiceClient.getEmergencyContacts(driverId)).thenReturn(Collections.emptyList());
+
+        orchestrator.handleCrashCancelled(cancelEvent());
+
+        verify(notificationService, never()).sendFalseAlarmSms(any(), any());
+    }
+
+    @Test
+    @DisplayName("handleCrashCancelled — an incident without a driver id needs no contact lookup")
+    void cancel_noDriver() {
+        Incident inc = incident(IncidentStatus.DISPATCHING, null);
+        inc.setDriverId(null);
+        when(incidentRepository.findByCrashEventId(crashId)).thenReturn(Optional.of(inc));
+        when(incidentRepository.cancelIfActive(any(), anyCollection(), any(), any())).thenReturn(1);
+
+        orchestrator.handleCrashCancelled(cancelEvent());
+
+        verifyNoInteractions(authServiceClient);
+    }
+
+    @Test
+    @DisplayName("handleCrashCancelled — an incident that is already over is not touched")
+    void cancel_alreadyFinished() {
+        when(incidentRepository.findByCrashEventId(crashId))
+                .thenReturn(Optional.of(incident(IncidentStatus.RESOLVED, responderId)));
+        when(incidentRepository.cancelIfActive(any(), anyCollection(), any(), any())).thenReturn(0);
+
+        orchestrator.handleCrashCancelled(cancelEvent());
+
+        verifyNoInteractions(notificationService, eventPublisher, authServiceClient, escalationTimerService);
+    }
+
+    @Test
+    @DisplayName("handleCrashCancelled — no incident for this crash: nothing happens")
+    void cancel_noIncident() {
+        when(incidentRepository.findByCrashEventId(crashId)).thenReturn(Optional.empty());
+        orchestrator.handleCrashCancelled(cancelEvent());
+        verify(incidentRepository, never()).cancelIfActive(any(), any(), any(), any());
     }
 
     // ══════════════════ ACCEPT ══════════════════
 
     @Test
-    @DisplayName("acceptDispatch — sets ACCEPTED status, cancels escalation, marks ON_MISSION")
-    void acceptDispatch_success() {
-        Incident incident = Incident.builder()
-                .id(incidentId).status(IncidentStatus.DISPATCHED).build();
+    @DisplayName("acceptDispatch — offered responder: ACCEPTED, timer stopped, ON_MISSION, driver told")
+    void accept_success() {
+        stubFindById(incident(IncidentStatus.DISPATCHED, responderId));
+        when(incidentRepository.acceptOffer(eq(incidentId), eq(responderId), eq(IncidentStatus.DISPATCHED),
+                eq(IncidentStatus.ACCEPTED), any(Instant.class))).thenReturn(1);
+        DispatchAttempt attempt = pendingAttempt(responderId);
+        when(attemptRepository.findByIncidentIdOrderByAttemptNumber(incidentId)).thenReturn(List.of(attempt));
 
-        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(incident));
-        when(incidentRepository.save(any())).thenReturn(incident);
-        when(attemptRepository.findByIncidentIdOrderByAttemptNumber(incidentId))
-                .thenReturn(List.of(DispatchAttempt.builder()
-                        .responderId(responderId).response(DispatchResponseType.PENDING).build()));
-        when(attemptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-        DispatchAckResponse response = orchestrator.acceptDispatch(incidentId, responderId.toString());
+        DispatchAckResponse response = orchestrator.acceptDispatch(incidentId, responderId);
 
         assertThat(response.getStatus()).isEqualTo("ACCEPTED");
-        assertThat(incident.getAssignedResponderId()).isEqualTo(responderId);
+        assertThat(response.getIncidentId()).isEqualTo(incidentId.toString());
+        assertThat(attempt.getResponse()).isEqualTo(DispatchResponseType.ACCEPTED);
         verify(escalationTimerService).cancelTimer(incidentId);
         verify(spatialQueryService).markResponderOnMission(responderId);
+        verify(authServiceClient).updateResponderStatus(responderId, "ON_MISSION");
+
+        verify(eventPublisher).publish(eq("INCIDENT_ACCEPTED"), any(Incident.class), eq(responderId), dataCaptor.capture());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> responder = (Map<String, Object>) dataCaptor.getValue().get("responder");
+        assertThat(responder).containsEntry("name", "Responder A")
+                .containsEntry("phone", "+923001111111")
+                .containsEntry("vehicleId", "AMB-001");
+    }
+
+    @Test
+    @DisplayName("acceptDispatch — a failing Auth call does not stop the accept")
+    void accept_authFails() {
+        stubFindById(incident(IncidentStatus.DISPATCHED, responderId));
+        when(incidentRepository.acceptOffer(any(), any(), any(), any(), any())).thenReturn(1);
+        doThrow(new RuntimeException("auth down")).when(authServiceClient)
+                .updateResponderStatus(any(), anyString());
+
+        DispatchAckResponse response = orchestrator.acceptDispatch(incidentId, responderId);
+
+        assertThat(response.getStatus()).isEqualTo("ACCEPTED");
+    }
+
+    @Test
+    @DisplayName("acceptDispatch — a responder who was never offered it gets 403")
+    void accept_wrongPerson() {
+        stubFindById(incident(IncidentStatus.DISPATCHED, responderId));
+
+        assertThatThrownBy(() -> orchestrator.acceptDispatch(incidentId, otherResponderId))
+                .isInstanceOf(IncidentAccessDeniedException.class);
+
+        verify(incidentRepository, never()).acceptOffer(any(), any(), any(), any(), any());
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    @DisplayName("acceptDispatch — a responder whose offer already expired gets 409, not 403")
+    void accept_offerExpired() {
+        stubFindById(incident(IncidentStatus.DISPATCHED, otherResponderId)); // now offered to B
+        when(attemptRepository.existsByIncidentIdAndResponderId(incidentId, responderId)).thenReturn(true);
+
+        assertThatThrownBy(() -> orchestrator.acceptDispatch(incidentId, responderId))
+                .isInstanceOf(InvalidIncidentStateException.class);
+    }
+
+    @Test
+    @DisplayName("acceptDispatch — a cancelled incident cannot be accepted (409)")
+    void accept_cancelledIncident() {
+        stubFindById(incident(IncidentStatus.CANCELLED_BY_USER, responderId));
+
+        assertThatThrownBy(() -> orchestrator.acceptDispatch(incidentId, responderId))
+                .isInstanceOf(InvalidIncidentStateException.class)
+                .hasMessageContaining("CANCELLED_BY_USER");
+        verify(incidentRepository, never()).acceptOffer(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("acceptDispatch — the offer is taken back at the last moment: 409, nothing announced")
+    void accept_lostRace() {
+        stubFindById(incident(IncidentStatus.DISPATCHED, responderId));
+        when(incidentRepository.acceptOffer(any(), any(), any(), any(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> orchestrator.acceptDispatch(incidentId, responderId))
+                .isInstanceOf(InvalidIncidentStateException.class);
+
+        verifyNoInteractions(eventPublisher, spatialQueryService, escalationTimerService);
+    }
+
+    @Test
+    @DisplayName("acceptDispatch — unknown incident gives 404")
+    void accept_unknownIncident() {
+        when(incidentRepository.findById(incidentId)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> orchestrator.acceptDispatch(incidentId, responderId))
+                .isInstanceOf(IncidentNotFoundException.class);
     }
 
     // ══════════════════ REJECT ══════════════════
 
     @Test
-    @DisplayName("rejectDispatch — escalates to next responder")
-    void rejectDispatch_escalates() {
-        Incident incident = Incident.builder()
-                .id(incidentId).status(IncidentStatus.DISPATCHED)
-                .gpsLat(37.77).gpsLng(-122.41).driverName("John").priorityScore(4).build();
-
-        UUID nextResponderId = UUID.randomUUID();
-        ResponderLocation nextResponder = ResponderLocation.builder()
-                .responderId(nextResponderId).userName("Responder B")
-                .vehicleId("AMB-002").latitude(37.79).longitude(-122.43).build();
-
-        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(incident));
-        when(attemptRepository.findByIncidentIdOrderByAttemptNumber(incidentId))
-                .thenReturn(List.of(
-                        DispatchAttempt.builder().responderId(responderId)
-                                .response(DispatchResponseType.PENDING).build()));
-        when(attemptRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList()))
-                .thenReturn(nextResponder);
+    @DisplayName("rejectDispatch — marks REJECTED and offers the incident to the next responder")
+    void reject_escalates() {
+        Incident inc = incident(IncidentStatus.DISPATCHED, responderId);
+        stubFindById(inc);
+        when(incidentRepository.releaseOffer(eq(incidentId), eq(responderId), eq(IncidentStatus.DISPATCHED),
+                eq(IncidentStatus.DISPATCHING), any(Instant.class))).thenAnswer(inv -> {
+            inc.setStatus(IncidentStatus.DISPATCHING);
+            return 1;
+        });
+        DispatchAttempt attemptA = pendingAttempt(responderId);
+        when(attemptRepository.findByIncidentIdOrderByAttemptNumber(incidentId)).thenReturn(List.of(attemptA));
         when(attemptRepository.countByIncidentId(incidentId)).thenReturn(1);
-        when(incidentRepository.save(any())).thenReturn(incident);
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), eq(List.of(responderId))))
+                .thenReturn(responderB);
+        stubClaim(1);
 
-        DispatchAckResponse response = orchestrator.rejectDispatch(incidentId, responderId.toString());
+        DispatchAckResponse response = orchestrator.rejectDispatch(incidentId, responderId);
 
         assertThat(response.getStatus()).isEqualTo("REJECTED");
-        verify(notificationService).sendResponderPush(eq(nextResponderId), eq("AMB-002"),
+        assertThat(attemptA.getResponse()).isEqualTo(DispatchResponseType.REJECTED);
+        verify(escalationTimerService).cancelTimer(incidentId);
+        verify(eventPublisher).publish(eq("INCIDENT_OFFER_EXPIRED"), any(Incident.class), eq(responderId), anyMap());
+        verify(notificationService).sendResponderPush(eq(otherResponderId), eq("AMB-002"),
                 any(), any(), anyDouble(), anyDouble(), anyInt());
+    }
+
+    @Test
+    @DisplayName("rejectDispatch — a responder who was never offered it gets 403")
+    void reject_wrongPerson() {
+        stubFindById(incident(IncidentStatus.DISPATCHED, responderId));
+        assertThatThrownBy(() -> orchestrator.rejectDispatch(incidentId, otherResponderId))
+                .isInstanceOf(IncidentAccessDeniedException.class);
+        verify(incidentRepository, never()).releaseOffer(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("rejectDispatch — the offer is already gone: 409")
+    void reject_lostRace() {
+        stubFindById(incident(IncidentStatus.DISPATCHED, responderId));
+        when(incidentRepository.releaseOffer(any(), any(), any(), any(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> orchestrator.rejectDispatch(incidentId, responderId))
+                .isInstanceOf(InvalidIncidentStateException.class);
+        verifyNoInteractions(eventPublisher, spatialQueryService);
     }
 
     // ══════════════════ STATUS TRANSITIONS ══════════════════
 
     @Test
-    @DisplayName("updateIncidentStatus — ARRIVED sets timestamp")
-    void statusTransition_arrived() {
-        Incident incident = Incident.builder()
-                .id(incidentId).status(IncidentStatus.ACCEPTED).build();
-        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(incident));
-        when(incidentRepository.save(any())).thenReturn(incident);
+    @DisplayName("updateIncidentStatus — ARRIVED")
+    void status_arrived() {
+        stubFindById(incident(IncidentStatus.ACCEPTED, responderId));
+        when(incidentRepository.markArrived(eq(incidentId), eq(responderId), eq(IncidentStatus.ACCEPTED),
+                eq(IncidentStatus.ARRIVED), any(Instant.class))).thenReturn(1);
 
-        orchestrator.updateIncidentStatus(incidentId, IncidentStatus.ARRIVED, null);
+        DispatchAckResponse response = orchestrator.updateIncidentStatus(
+                incidentId, responderId, IncidentStatus.ARRIVED, null);
 
-        assertThat(incident.getStatus()).isEqualTo(IncidentStatus.ARRIVED);
-        assertThat(incident.getArrivedAt()).isNotNull();
+        assertThat(response.getStatus()).isEqualTo("ARRIVED");
+        verify(eventPublisher).publish(eq("INCIDENT_STATUS"), any(Incident.class), eq(responderId), dataCaptor.capture());
+        assertThat(dataCaptor.getValue()).containsEntry("status", "ARRIVED");
     }
 
     @Test
-    @DisplayName("updateIncidentStatus — EN_ROUTE_HOSPITAL sends hospital pre-alert")
-    void statusTransition_enRoute() {
-        Incident incident = Incident.builder()
-                .id(incidentId).status(IncidentStatus.ARRIVED)
-                .bloodType("O+").allergies("None").build();
-        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(incident));
-        when(incidentRepository.save(any())).thenReturn(incident);
+    @DisplayName("updateIncidentStatus — EN_ROUTE_HOSPITAL sends the hospital pre-alert")
+    void status_enRoute() {
+        stubFindById(incident(IncidentStatus.ARRIVED, responderId));
+        when(incidentRepository.markEnRoute(eq(incidentId), eq(responderId), eq(IncidentStatus.ARRIVED),
+                eq(IncidentStatus.EN_ROUTE_HOSPITAL), any(Instant.class), eq("HOSP-1"))).thenReturn(1);
 
-        orchestrator.updateIncidentStatus(incidentId, IncidentStatus.EN_ROUTE_HOSPITAL, "HOSP-1");
+        orchestrator.updateIncidentStatus(incidentId, responderId, IncidentStatus.EN_ROUTE_HOSPITAL, "HOSP-1");
 
-        verify(notificationService).sendHospitalPreAlert("HOSP-1", incidentId, "O+", "None", "Calculating...");
+        verify(notificationService).sendHospitalPreAlert("HOSP-1", incidentId, "O+", "Penicillin", "Calculating...");
     }
 
     @Test
-    @DisplayName("updateIncidentStatus — RESOLVED cleans up GPS and resets responder")
-    void statusTransition_resolved() {
-        Incident incident = Incident.builder()
-                .id(incidentId).status(IncidentStatus.EN_ROUTE_HOSPITAL)
-                .assignedResponderId(responderId).build();
-        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(incident));
-        when(incidentRepository.save(any())).thenReturn(incident);
+    @DisplayName("updateIncidentStatus — RESOLVED straight from ARRIVED cleans up and frees the responder")
+    void status_resolved() {
+        stubFindById(incident(IncidentStatus.ARRIVED, responderId));
+        when(incidentRepository.markResolved(eq(incidentId), eq(responderId),
+                eq(List.of(IncidentStatus.ARRIVED, IncidentStatus.EN_ROUTE_HOSPITAL)),
+                eq(IncidentStatus.RESOLVED), any(Instant.class))).thenReturn(1);
 
-        orchestrator.updateIncidentStatus(incidentId, IncidentStatus.RESOLVED, null);
+        orchestrator.updateIncidentStatus(incidentId, responderId, IncidentStatus.RESOLVED, null);
 
-        assertThat(incident.getResolvedAt()).isNotNull();
         verify(gpsStreamingService).cleanupIncident(incidentId.toString());
         verify(spatialQueryService).markResponderOnDuty(responderId);
+        verify(authServiceClient).updateResponderStatus(responderId, "ON_DUTY");
+    }
+
+    @Test
+    @DisplayName("updateIncidentStatus — someone who is not the assigned responder gets 403")
+    void status_wrongPerson() {
+        stubFindById(incident(IncidentStatus.ACCEPTED, responderId));
+        assertThatThrownBy(() -> orchestrator.updateIncidentStatus(
+                incidentId, otherResponderId, IncidentStatus.ARRIVED, null))
+                .isInstanceOf(IncidentAccessDeniedException.class);
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    @DisplayName("updateIncidentStatus — a step out of order gets 409")
+    void status_wrongOrder() {
+        stubFindById(incident(IncidentStatus.ACCEPTED, responderId));
+        when(incidentRepository.markEnRoute(any(), any(), any(), any(), any(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> orchestrator.updateIncidentStatus(
+                incidentId, responderId, IncidentStatus.EN_ROUTE_HOSPITAL, "HOSP-1"))
+                .isInstanceOf(InvalidIncidentStateException.class)
+                .hasMessageContaining("ACCEPTED");
+        verifyNoInteractions(eventPublisher, notificationService);
+    }
+
+    @Test
+    @DisplayName("updateIncidentStatus — a status this endpoint does not set gives 400")
+    void status_invalidValue() {
+        stubFindById(incident(IncidentStatus.ACCEPTED, responderId));
+        assertThatThrownBy(() -> orchestrator.updateIncidentStatus(
+                incidentId, responderId, IncidentStatus.CANCELLED_BY_USER, null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("updateIncidentStatus — unknown incident gives 404")
+    void status_unknownIncident() {
+        when(incidentRepository.findById(incidentId)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> orchestrator.updateIncidentStatus(
+                incidentId, responderId, IncidentStatus.ARRIVED, null))
+                .isInstanceOf(IncidentNotFoundException.class);
     }
 
     // ══════════════════ BYSTANDER ══════════════════
 
     @Test
-    @DisplayName("markBystanderAssisting — sets flag on incident")
-    void bystanderAssist() {
-        Incident incident = Incident.builder()
-                .id(incidentId).bystanderAssisting(false).build();
-        when(incidentRepository.findById(incidentId)).thenReturn(Optional.of(incident));
-        when(incidentRepository.save(any())).thenReturn(incident);
+    @DisplayName("markBystanderAssisting — the driver's phone taps it: responder is told")
+    void bystander_first() {
+        stubFindById(incident(IncidentStatus.ACCEPTED, responderId));
+        when(incidentRepository.markBystanderAssisting(eq(incidentId), anyCollection())).thenReturn(1);
 
-        orchestrator.markBystanderAssisting(incidentId);
+        DispatchAckResponse response = orchestrator.markBystanderAssisting(
+                incidentId, new Viewer(driverId, "DRIVER"));
 
-        assertThat(incident.getBystanderAssisting()).isTrue();
+        assertThat(response.getStatus()).isEqualTo("BYSTANDER_NOTIFIED");
+        verify(eventPublisher).publish(eq("BYSTANDER_ASSISTING"), any(Incident.class), eq(responderId), anyMap());
+    }
+
+    @Test
+    @DisplayName("markBystanderAssisting — a second tap is accepted quietly")
+    void bystander_repeat() {
+        stubFindById(incident(IncidentStatus.ACCEPTED, responderId));
+        when(incidentRepository.markBystanderAssisting(eq(incidentId), anyCollection())).thenReturn(0);
+
+        DispatchAckResponse response = orchestrator.markBystanderAssisting(
+                incidentId, new Viewer(driverId, "DRIVER"));
+
+        assertThat(response.getStatus()).isEqualTo("BYSTANDER_NOTIFIED");
+        verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    @DisplayName("markBystanderAssisting — a stranger gets 403")
+    void bystander_stranger() {
+        stubFindById(incident(IncidentStatus.ACCEPTED, responderId));
+        assertThatThrownBy(() -> orchestrator.markBystanderAssisting(
+                incidentId, new Viewer(UUID.randomUUID(), "DRIVER")))
+                .isInstanceOf(IncidentAccessDeniedException.class);
+    }
+
+    @Test
+    @DisplayName("markBystanderAssisting — a finished incident gives 409")
+    void bystander_finished() {
+        stubFindById(incident(IncidentStatus.RESOLVED, responderId));
+        assertThatThrownBy(() -> orchestrator.markBystanderAssisting(
+                incidentId, new Viewer(driverId, "DRIVER")))
+                .isInstanceOf(InvalidIncidentStateException.class);
+        verify(incidentRepository, never()).markBystanderAssisting(any(), any());
+    }
+
+    @Test
+    @DisplayName("markBystanderAssisting — unknown incident gives 404")
+    void bystander_unknown() {
+        when(incidentRepository.findById(incidentId)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> orchestrator.markBystanderAssisting(
+                incidentId, new Viewer(driverId, "DRIVER")))
+                .isInstanceOf(IncidentNotFoundException.class);
     }
 }

@@ -15,6 +15,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -46,6 +48,11 @@ class CrashEventConsumerTest {
         crashCancelledPayload = objectMapper.writeValueAsString(cancelled);
     }
 
+    private String payloadOf(String type) throws Exception {
+        return objectMapper.writeValueAsString(CrashEventMessage.builder()
+                .eventType(type).crashEventId("xxx").build());
+    }
+
     @Test
     @DisplayName("CRASH_DETECTED routes to handleCrashDetected")
     void consume_crashDetected() {
@@ -63,20 +70,50 @@ class CrashEventConsumerTest {
     }
 
     @Test
+    @DisplayName("CRASH_PENDING and CRASH_DISMISSED (Phase 2 events) are ignored quietly")
+    void consume_phase2Events() throws Exception {
+        consumer.consume(payloadOf("CRASH_PENDING"));
+        consumer.consume(payloadOf("CRASH_DISMISSED"));
+        verifyNoInteractions(orchestrator);
+    }
+
+    @Test
+    @DisplayName("windowEndsAt on a CRASH_PENDING message is understood")
+    void consume_windowEndsAtParsed() throws Exception {
+        String json = "{\"eventType\":\"CRASH_PENDING\",\"crashEventId\":\"abc\","
+                + "\"windowEndsAt\":\"2026-10-29T18:30:10Z\",\"timestamp\":\"2026-10-29T18:30:00Z\"}";
+        CrashEventMessage parsed = objectMapper.readValue(json, CrashEventMessage.class);
+        assertThat(parsed.getWindowEndsAt()).isEqualTo(Instant.parse("2026-10-29T18:30:10Z"));
+
+        consumer.consume(json);
+        verifyNoInteractions(orchestrator);
+    }
+
+    @Test
     @DisplayName("Malformed JSON does not crash the consumer")
     void consume_malformedJson() {
         consumer.consume("not valid json at all {{{");
-        verify(orchestrator, never()).handleCrashDetected(any());
-        verify(orchestrator, never()).handleCrashCancelled(any());
+        verifyNoInteractions(orchestrator);
+    }
+
+    @Test
+    @DisplayName("A message without eventType is ignored")
+    void consume_noEventType() {
+        consumer.consume("{\"crashEventId\":\"xxx\"}");
+        verifyNoInteractions(orchestrator);
     }
 
     @Test
     @DisplayName("Unknown event type is logged but ignored")
     void consume_unknownType() throws Exception {
-        CrashEventMessage unknown = CrashEventMessage.builder()
-                .eventType("SOME_FUTURE_EVENT").crashEventId("xxx").build();
-        consumer.consume(objectMapper.writeValueAsString(unknown));
-        verify(orchestrator, never()).handleCrashDetected(any());
-        verify(orchestrator, never()).handleCrashCancelled(any());
+        consumer.consume(payloadOf("SOME_FUTURE_EVENT"));
+        verifyNoInteractions(orchestrator);
+    }
+
+    @Test
+    @DisplayName("An error inside the orchestrator does not escape the consumer")
+    void consume_orchestratorFails() {
+        doThrow(new IllegalStateException("db down")).when(orchestrator).handleCrashDetected(any());
+        assertThatCode(() -> consumer.consume(crashDetectedPayload)).doesNotThrowAnyException();
     }
 }
