@@ -1,13 +1,13 @@
 FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /app
 COPY pom.xml .
-RUN mvn dependency:go-offline -B
+RUN --mount=type=cache,target=/root/.m2 mvn dependency:go-offline -B
 COPY src ./src
-RUN mvn package -DskipTests -B
+RUN --mount=type=cache,target=/root/.m2 mvn package -Dmaven.test.skip=true -B
 
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:17-jre
 WORKDIR /app
-RUN addgroup -S iers && adduser -S iers -G iers
+RUN groupadd -r iers && useradd -r -g iers iers
 USER iers
 COPY --from=build /app/target/*.jar app.jar
 EXPOSE 8083

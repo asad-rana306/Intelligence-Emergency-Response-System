@@ -5,7 +5,7 @@ import java.time.Instant;
 
 /**
  * Payload published to the "crash-events" Kafka topic.
- * Carries both CRASH_DETECTED and CRASH_CANCELLED event types.
+ * Event types: CRASH_PENDING, CRASH_DETECTED, CRASH_CANCELLED, CRASH_DISMISSED.
  */
 @Data @NoArgsConstructor @AllArgsConstructor @Builder
 public class CrashEventMessage {
@@ -23,4 +23,7 @@ public class CrashEventMessage {
     private String source;
     private String reason;
     private Instant timestamp;
+
+    /** NEW (Phase 2). Only set on CRASH_PENDING: when the 10-second window ends. */
+    private Instant windowEndsAt;
 }

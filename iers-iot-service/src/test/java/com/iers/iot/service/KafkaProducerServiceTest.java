@@ -1,6 +1,7 @@
 package com.iers.iot.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.iers.iot.dto.kafka.CrashEventMessage;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -11,7 +12,6 @@ import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
@@ -25,15 +25,31 @@ import static org.mockito.Mockito.*;
 class KafkaProducerServiceTest {
 
     @Mock private KafkaTemplate<String, String> kafkaTemplate;
-    @Spy private ObjectMapper objectMapper = new ObjectMapper();
+
+    // The real app's mapper knows about Instant; a plain new ObjectMapper() does not.
+    @Spy private ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
     @InjectMocks private KafkaProducerService service;
+
+    private String publishAndCaptureValue(CrashEventMessage message, String expectedKey) {
+        ReflectionTestUtils.setField(service, "crashEventsTopic", "crash-events");
+        when(kafkaTemplate.send(anyString(), anyString(), anyString()))
+                .thenReturn(new CompletableFuture<>());
+
+        service.publishCrashEvent(message);
+
+        ArgumentCaptor<String> topicCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
+        verify(kafkaTemplate).send(topicCaptor.capture(), keyCaptor.capture(), valueCaptor.capture());
+        assertThat(topicCaptor.getValue()).isEqualTo("crash-events");
+        assertThat(keyCaptor.getValue()).isEqualTo(expectedKey);
+        return valueCaptor.getValue();
+    }
 
     @Test
     @DisplayName("publishCrashEvent — sends serialized message with correct key")
     void publish_success() {
-        ReflectionTestUtils.setField(service, "crashEventsTopic", "crash-events");
-
         CrashEventMessage message = CrashEventMessage.builder()
                 .eventType("CRASH_DETECTED")
                 .crashEventId("event-123")
@@ -44,28 +60,15 @@ class KafkaProducerServiceTest {
                 .timestamp(Instant.now())
                 .build();
 
-        when(kafkaTemplate.send(anyString(), anyString(), anyString()))
-                .thenReturn(new CompletableFuture<>());
+        String value = publishAndCaptureValue(message, "event-123");
 
-        service.publishCrashEvent(message);
-
-        ArgumentCaptor<String> topicCaptor = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<String> keyCaptor = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
-
-        verify(kafkaTemplate).send(topicCaptor.capture(), keyCaptor.capture(), valueCaptor.capture());
-
-        assertThat(topicCaptor.getValue()).isEqualTo("crash-events");
-        assertThat(keyCaptor.getValue()).isEqualTo("event-123");
-        assertThat(valueCaptor.getValue()).contains("CRASH_DETECTED");
-        assertThat(valueCaptor.getValue()).contains("driver-456");
+        assertThat(value).contains("CRASH_DETECTED");
+        assertThat(value).contains("driver-456");
     }
 
     @Test
     @DisplayName("publishCrashEvent — CRASH_CANCELLED includes reason")
     void publish_cancelled() {
-        ReflectionTestUtils.setField(service, "crashEventsTopic", "crash-events");
-
         CrashEventMessage message = CrashEventMessage.builder()
                 .eventType("CRASH_CANCELLED")
                 .crashEventId("event-789")
@@ -73,15 +76,46 @@ class KafkaProducerServiceTest {
                 .timestamp(Instant.now())
                 .build();
 
-        when(kafkaTemplate.send(anyString(), anyString(), anyString()))
-                .thenReturn(new CompletableFuture<>());
+        String value = publishAndCaptureValue(message, "event-789");
 
-        service.publishCrashEvent(message);
+        assertThat(value).contains("CRASH_CANCELLED");
+        assertThat(value).contains("LATE_CANCEL");
+    }
 
-        ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
-        verify(kafkaTemplate).send(anyString(), anyString(), valueCaptor.capture());
+    @Test
+    @DisplayName("publishCrashEvent — CRASH_PENDING carries windowEndsAt")
+    void publish_pending() {
+        CrashEventMessage message = CrashEventMessage.builder()
+                .eventType("CRASH_PENDING")
+                .crashEventId("event-1")
+                .driverId("driver-1")
+                .deviceId("DEV-001")
+                .source("HTTP")
+                .windowEndsAt(Instant.parse("2026-10-29T18:30:10Z"))
+                .timestamp(Instant.parse("2026-10-29T18:30:00Z"))
+                .build();
 
-        assertThat(valueCaptor.getValue()).contains("CRASH_CANCELLED");
-        assertThat(valueCaptor.getValue()).contains("LATE_CANCEL");
+        String value = publishAndCaptureValue(message, "event-1");
+
+        assertThat(value).contains("CRASH_PENDING");
+        assertThat(value).contains("windowEndsAt");
+        assertThat(value).contains("2026-10-29T18:30:10Z");
+    }
+
+    @Test
+    @DisplayName("publishCrashEvent — CRASH_DISMISSED carries the reason")
+    void publish_dismissed() {
+        CrashEventMessage message = CrashEventMessage.builder()
+                .eventType("CRASH_DISMISSED")
+                .crashEventId("event-2")
+                .driverId("driver-1")
+                .reason("ML_NOT_SEVERE")
+                .timestamp(Instant.now())
+                .build();
+
+        String value = publishAndCaptureValue(message, "event-2");
+
+        assertThat(value).contains("CRASH_DISMISSED");
+        assertThat(value).contains("ML_NOT_SEVERE");
     }
 }

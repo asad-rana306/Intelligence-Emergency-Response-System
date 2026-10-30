@@ -25,6 +25,10 @@ public class HeartbeatService {
     private static final Duration HEARTBEAT_TTL = Duration.ofSeconds(60);
 
     public void storeHeartbeat(String deviceId, HeartbeatRequest request) {
+        // The ESP32 has no clock, so the timestamp is optional. Missing -> use the server time.
+        if (request.getTimestamp() == null) {
+            request.setTimestamp(System.currentTimeMillis());
+        }
         try {
             String key = "device:heartbeat:" + deviceId;
             String value = objectMapper.writeValueAsString(request);

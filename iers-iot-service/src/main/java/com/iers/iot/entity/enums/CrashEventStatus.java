@@ -6,5 +6,6 @@ public enum CrashEventStatus {
     CONFIRMED,
     CANCELLED,
     LATE_CANCELLED,
-    DISPATCHED
+    DISPATCHED,   // reserved, nothing sets it yet
+    DISMISSED     // NEW (Phase 2): the ML check said "not severe", so nothing was dispatched
 }

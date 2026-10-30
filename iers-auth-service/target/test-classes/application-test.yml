@@ -1,0 +1,24 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+auth:
+  jwt:
+    secret: test-secret-key-that-is-at-least-32-characters-long-for-hmac
+    access-token-expiry: PT15M
+    refresh-token-expiry: P7D
+
+eureka:
+  client:
+    enabled: false

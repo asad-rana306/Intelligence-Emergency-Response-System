@@ -10,5 +10,7 @@ public class HeartbeatRequest {
     @NotNull private Double gpsLng;
     private Double fuelLevel;
     private String hardwareHealth;
-    @NotNull private Long timestamp;
+
+    /** Optional since Phase 2: the server stamps the time when this is missing. */
+    private Long timestamp;
 }

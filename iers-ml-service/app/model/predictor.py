@@ -1,107 +1,81 @@
-"""
-Crash Severity Predictor
-
-Loads the trained Random Forest model and classifies incoming sensor payloads.
-Auto-trains the model on first startup if no saved model exists.
-"""
-
 import os
-import numpy as np
-import joblib
-import logging
-from app.model.dataset_generator import FEATURE_COLUMNS, SEVERITY_MAP
-from app.model.trainer import train_model, MODEL_PATH, METADATA_PATH
 
-logger = logging.getLogger(__name__)
+import joblib
+import numpy as np
+import pandas as pd
+
+from app.model.dataset_generator import (
+    FEATURE_COLUMNS, G_MAX, GYRO_MAX, ROLL_MAX, SEVERITY_MAP, SPEED_MAX, derive,
+)
+from app.model.trainer import META_PATH, MODEL_PATH, SEVERE_THRESHOLD, train_model
+
+
+def _num(d, *keys, default=0.0):
+    """Read the first matching numeric key from the sensorData dict."""
+    for k in keys:
+        if d and k in d and d[k] is not None:
+            try:
+                return float(d[k])
+            except (TypeError, ValueError):
+                pass
+    return default
 
 
 class CrashPredictor:
-    """
-    Stateful predictor that holds the loaded model in memory.
-    Initialized once at FastAPI startup via the lifespan handler.
-    """
-
     def __init__(self):
         self.model = None
-        self.metadata = None
-        self._loaded = False
-
-    def load(self):
-        """Load the model from disk, or train first if it doesn't exist."""
-        if not os.path.exists(MODEL_PATH):
-            logger.info("No trained model found — running training pipeline...")
-            train_model()
-
-        logger.info(f"Loading model from {MODEL_PATH}")
-        self.model = joblib.load(MODEL_PATH)
-        self.metadata = joblib.load(METADATA_PATH) if os.path.exists(METADATA_PATH) else {}
-        self._loaded = True
-        logger.info(f"Model loaded — accuracy: {self.metadata.get('accuracy', 'N/A')}")
+        self.threshold = SEVERE_THRESHOLD
 
     @property
     def is_loaded(self) -> bool:
-        return self._loaded
+        return self.model is not None
 
-    def predict(self, g_force: float, rollover_angle: float, speed: float,
-                sensor_data: dict | None = None) -> dict:
-        """
-        Classify a crash event.
+    def load(self):
+        if not (os.path.exists(MODEL_PATH) and os.path.exists(META_PATH)):
+            train_model(verbose=False)
+        self.model = joblib.load(MODEL_PATH)
+        meta = joblib.load(META_PATH)
+        self.threshold = meta.get("severe_threshold", SEVERE_THRESHOLD)
 
-        Args:
-            g_force:        Peak resultant G-force
-            rollover_angle: Maximum roll angle (degrees)
-            speed:          Vehicle speed at impact (km/h)
-            sensor_data:    Optional raw sensor blob with accel/gyro axes
+    def predict(self, g_force, rollover_angle, speed, sensor_data=None) -> dict:
+        if self.model is None:
+            self.load()
 
-        Returns:
-            {"severe": bool, "priorityScore": int, "severity": str}
-        """
-        if not self._loaded:
-            raise RuntimeError("Model not loaded — call load() first")
+        # Clamp to what the real sensor can report
+        g = float(np.clip(abs(g_force), 0.0, G_MAX))
+        roll = float(np.clip(abs(rollover_angle), 0.0, ROLL_MAX))
+        spd = float(np.clip(abs(speed), 0.0, SPEED_MAX))
 
-        # ── Extract axis data from sensorData or use defaults ──
-        accel_x = 0.0
-        accel_y = 0.0
-        accel_z = 1.0  # Normal gravity
-        gyro_roll = 0.0
-        gyro_pitch = 0.0
+        # Names the device, the Flutter app and the older React app use are all accepted.
+        ax = _num(sensor_data, "accelX", "accel_x", "accelerometerX", "accelerometer_x")
+        ay = _num(sensor_data, "accelY", "accel_y", "accelerometerY", "accelerometer_y")
+        az = _num(sensor_data, "accelZ", "accel_z", "accelerometerZ", "accelerometer_z", default=1.0)
+        if abs(az) > 4:  # looks like m/s^2 (gravity = 9.8), not g
+            ax, ay, az = ax / 9.80665, ay / 9.80665, az / 9.80665
+        ax, ay, az = (float(np.clip(v, -G_MAX, G_MAX)) for v in (ax, ay, az))
+        gr = float(np.clip(_num(sensor_data, "gyroRoll", "gyro_roll", "gyroscopeRoll", "gyroscope_roll"),
+                           -GYRO_MAX, GYRO_MAX))
+        gp = float(np.clip(_num(sensor_data, "gyroPitch", "gyro_pitch", "gyroscopePitch", "gyroscope_pitch"),
+                           -GYRO_MAX, GYRO_MAX))
 
-        if sensor_data:
-            accel_x = float(sensor_data.get("accelerometerX", 0.0))
-            accel_y = float(sensor_data.get("accelerometerY", 0.0))
-            accel_z = float(sensor_data.get("accelerometerZ", 1.0))
-            gyro_roll = float(sensor_data.get("gyroscopeRoll", 0.0))
-            gyro_pitch = float(sensor_data.get("gyroscopePitch", 0.0))
+        row = pd.DataFrame([{
+            "g_force": g, "rollover_angle": roll, "speed": spd,
+            "accel_x": ax, "accel_y": ay, "accel_z": az,
+            "gyro_roll": gr, "gyro_pitch": gp,
+        }])
+        X = derive(row)[FEATURE_COLUMNS]
 
-        # ── Compute derived features (must match training order) ──
-        impact_energy = 0.5 * (speed ** 2) * g_force / 10000
-        rollover_risk = rollover_angle / 90.0
-        speed_gforce = speed * g_force / 100
-        lateral_ratio = abs(accel_y) / (g_force + 0.01)
-        is_stationary = 1 if speed < 5 else 0
+        proba = self.model.predict_proba(X)[0]
+        classes = list(self.model.classes_)
+        p_severe = float(sum(p for c, p in zip(classes, proba) if c >= 3))
+        best = int(classes[int(np.argmax(proba))])
 
-        # ── Assemble feature vector (same order as FEATURE_COLUMNS) ──
-        features = np.array([[
-            g_force, rollover_angle, speed,
-            accel_x, accel_y, accel_z,
-            gyro_roll, gyro_pitch,
-            impact_energy, rollover_risk, speed_gforce,
-            lateral_ratio, is_stationary,
-        ]])
+        severe = p_severe >= self.threshold
+        if severe:
+            priority = best if best >= 3 else 3
+        else:
+            priority = best if best < 3 else 2
+        return {"severe": bool(severe), "priorityScore": int(priority), "severity": SEVERITY_MAP[priority]}
 
-        # ── Predict ──
-        priority_score = int(self.model.predict(features)[0])
-        severity = SEVERITY_MAP.get(priority_score, "UNKNOWN")
-        is_severe = priority_score >= 3
 
-        logger.info(
-            f"Prediction: gForce={g_force}, rollover={rollover_angle}°, "
-            f"speed={speed}km/h → priority={priority_score} ({severity}), "
-            f"severe={is_severe}"
-        )
-
-        return {
-            "severe": is_severe,
-            "priorityScore": priority_score,
-            "severity": severity,
-        }
+predictor = CrashPredictor()

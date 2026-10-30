@@ -45,6 +45,39 @@ class HeartbeatServiceTest {
     }
 
     @Test
+    @DisplayName("storeHeartbeat — a missing timestamp is stamped by the server")
+    void storeHeartbeat_noTimestamp() {
+        HeartbeatRequest request = HeartbeatRequest.builder()
+                .speed(65.0).gpsLat(37.77).gpsLng(-122.41)
+                .hardwareHealth("OK").build();
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        long before = System.currentTimeMillis();
+
+        service.storeHeartbeat("DEV-001", request);
+
+        assertThat(request.getTimestamp()).isNotNull().isGreaterThanOrEqualTo(before);
+        verify(valueOperations).set(
+                eq("device:heartbeat:DEV-001"),
+                contains("\"timestamp\":"),
+                eq(Duration.ofSeconds(60)));
+    }
+
+    @Test
+    @DisplayName("storeHeartbeat — a timestamp the device sent is kept")
+    void storeHeartbeat_keepsDeviceTimestamp() {
+        HeartbeatRequest request = HeartbeatRequest.builder()
+                .speed(65.0).gpsLat(37.77).gpsLng(-122.41)
+                .timestamp(1723300800000L).build();
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+
+        service.storeHeartbeat("DEV-001", request);
+
+        assertThat(request.getTimestamp()).isEqualTo(1723300800000L);
+    }
+
+    @Test
     @DisplayName("getLatestHeartbeat — retrieves from Redis")
     void getLatestHeartbeat() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);

@@ -56,10 +56,13 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
     );
 
     // ── Paths authenticated by device API key, NOT JWT ──
+    // EXACT matches only. A prefix match would also catch /api/telemetry/crash/{id}/cancel and
+    // /late-cancel and /media, which belong to the driver's phone and need a JWT login.
     private static final List<String> DEVICE_PATHS = List.of(
             "/api/telemetry/crash",
-            "/api/telemetry/heartbeat",
-            "/api/telemetry/crash/sms"
+            "/api/telemetry/crash/sms",
+            "/api/telemetry/crash/cancel",     // NEW (Phase 2): the cancel button on the box
+            "/api/telemetry/heartbeat"
     );
 
     /**
@@ -74,6 +77,13 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         ServerHttpRequest request = exchange.getRequest();
         String path = request.getURI().getPath();
+
+        // ── 0. Service-to-service paths are never reachable from outside (Phase 2) ──
+        // Services call each other directly through Eureka, not through this gateway.
+        if (isInternalPath(path)) {
+            log.warn("Blocked outside call to internal path {}", path);
+            return sendError(exchange, HttpStatus.FORBIDDEN, "Internal endpoints are not available from outside");
+        }
 
         // ── 1. Open endpoints — pass through ──
         if (isOpenPath(path)) {
@@ -204,7 +214,12 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
     }
 
     private boolean isDevicePath(String path) {
-        return DEVICE_PATHS.stream().anyMatch(path::startsWith);
+        String clean = path.length() > 1 && path.endsWith("/") ? path.substring(0, path.length() - 1) : path;
+        return DEVICE_PATHS.contains(clean);
+    }
+
+    private boolean isInternalPath(String path) {
+        return path.equals("/internal") || path.startsWith("/internal/");
     }
 
     private String claimOrDefault(Claims claims, String key, String defaultValue) {
