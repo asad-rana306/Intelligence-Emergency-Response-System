@@ -23,6 +23,8 @@ public class IncidentEventMessage {
     public static final String INCIDENT_STAND_DOWN = "INCIDENT_STAND_DOWN";
     public static final String BYSTANDER_ASSISTING = "BYSTANDER_ASSISTING";
     public static final String NO_RESPONDER_AVAILABLE = "NO_RESPONDER_AVAILABLE";
+    /** PHASE 6: a chat message (text or voice) between the driver and the assigned responder. */
+    public static final String CHAT_MESSAGE = "CHAT_MESSAGE";
 
     private String eventType;
     private String incidentId;

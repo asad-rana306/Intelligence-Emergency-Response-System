@@ -106,6 +106,11 @@ public class SpatialQueryService {
         }
     }
 
+    /** PHASE 6: this responder's row (name, phone, vehicle), or null if Dispatch never saw them. */
+    public ResponderLocation findLocation(UUID responderId) {
+        return locationRepository.findByResponderId(responderId).orElse(null);
+    }
+
     /**
      * Mark a responder as ON_MISSION in the local table (prevents re-dispatch).
      */

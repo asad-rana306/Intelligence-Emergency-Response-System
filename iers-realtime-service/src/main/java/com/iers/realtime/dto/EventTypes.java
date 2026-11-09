@@ -20,6 +20,8 @@ public final class EventTypes {
     public static final String INCIDENT_STAND_DOWN = "INCIDENT_STAND_DOWN";
     public static final String BYSTANDER_ASSISTING = "BYSTANDER_ASSISTING";
     public static final String NO_RESPONDER_AVAILABLE = "NO_RESPONDER_AVAILABLE";
+    /** PHASE 6: a text or voice message between the driver and the assigned responder. */
+    public static final String CHAT_MESSAGE = "CHAT_MESSAGE";
 
     // Made by this service
     public static final String SNAPSHOT = "SNAPSHOT";

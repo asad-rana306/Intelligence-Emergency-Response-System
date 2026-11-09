@@ -30,17 +30,28 @@ class CrashSweepServiceTest {
 
     @InjectMocks private CrashSweepService sweepService;
 
-    private CrashEvent overdue(UUID id) {
-        return CrashEvent.builder().id(id).status(CrashEventStatus.RECEIVED)
-                .cancellationDeadline(Instant.now().minusSeconds(30)).build();
+    private CrashEvent crash(UUID id, CrashEventStatus status, long deadlineSecondsAgo) {
+        return CrashEvent.builder().id(id).status(status)
+                .cancellationDeadline(Instant.now().minusSeconds(deadlineSecondsAgo)).build();
     }
+
+    private void received(CrashEvent... events) {
+        when(crashEventRepository.findByStatusAndCancellationDeadlineBefore(eq(CrashEventStatus.RECEIVED), any()))
+                .thenReturn(List.of(events));
+    }
+
+    private void processing(CrashEvent... events) {
+        when(crashEventRepository.findByStatusAndCancellationDeadlineBefore(eq(CrashEventStatus.PROCESSING), any()))
+                .thenReturn(List.of(events));
+    }
+
+    // ══════════════════ RECEIVED, timer lost ══════════════════
 
     @Test
     @DisplayName("sweep — finishes an overdue crash whose timer was lost")
     void sweep_finishesLostTimer() {
         UUID id = UUID.randomUUID();
-        when(crashEventRepository.findByStatusAndCancellationDeadlineBefore(eq(CrashEventStatus.RECEIVED), any()))
-                .thenReturn(List.of(overdue(id)));
+        received(crash(id, CrashEventStatus.RECEIVED, 30));
         when(timerService.isTimerPending(id)).thenReturn(false);
 
         sweepService.sweep();
@@ -52,8 +63,7 @@ class CrashSweepServiceTest {
     @DisplayName("sweep — leaves a crash alone while its normal timer is still alive")
     void sweep_skipsLiveTimer() {
         UUID id = UUID.randomUUID();
-        when(crashEventRepository.findByStatusAndCancellationDeadlineBefore(any(), any()))
-                .thenReturn(List.of(overdue(id)));
+        received(crash(id, CrashEventStatus.RECEIVED, 30));
         when(timerService.isTimerPending(id)).thenReturn(true);
 
         sweepService.sweep();
@@ -64,11 +74,10 @@ class CrashSweepServiceTest {
     @Test
     @DisplayName("sweep — nothing overdue, nothing happens")
     void sweep_nothingOverdue() {
-        when(crashEventRepository.findByStatusAndCancellationDeadlineBefore(any(), any())).thenReturn(List.of());
-
         sweepService.sweep();
 
         verifyNoInteractions(ingestionService);
+        verify(crashEventRepository, never()).transition(any(), any(), any());
     }
 
     @Test
@@ -76,8 +85,7 @@ class CrashSweepServiceTest {
     void sweep_oneFailureDoesNotStopTheRest() {
         UUID bad = UUID.randomUUID();
         UUID good = UUID.randomUUID();
-        when(crashEventRepository.findByStatusAndCancellationDeadlineBefore(any(), any()))
-                .thenReturn(List.of(overdue(bad), overdue(good)));
+        received(crash(bad, CrashEventStatus.RECEIVED, 30), crash(good, CrashEventStatus.RECEIVED, 30));
         when(timerService.isTimerPending(any())).thenReturn(false);
         doThrow(new RuntimeException("boom")).when(ingestionService).onCancellationWindowExpired(bad);
 
@@ -89,7 +97,6 @@ class CrashSweepServiceTest {
     @Test
     @DisplayName("sweep — only looks at deadlines older than the 2-second grace")
     void sweep_usesGrace() {
-        when(crashEventRepository.findByStatusAndCancellationDeadlineBefore(any(), any())).thenReturn(List.of());
         Instant before = Instant.now();
 
         sweepService.sweep();
@@ -99,5 +106,88 @@ class CrashSweepServiceTest {
                 eq(CrashEventStatus.RECEIVED), cutoff.capture());
         assertThat(Duration.between(cutoff.getValue(), before).toMillis())
                 .isBetween(CrashSweepService.GRACE_SECONDS * 1000 - 500, CrashSweepService.GRACE_SECONDS * 1000 + 2000);
+    }
+
+    // ══════════════════ PROCESSING, stuck ══════════════════
+
+    @Test
+    @DisplayName("sweep — a crash stuck in PROCESSING is put back and tried again")
+    void sweep_retriesStuckProcessing() {
+        UUID id = UUID.randomUUID();
+        processing(crash(id, CrashEventStatus.PROCESSING, 300));
+        when(crashEventRepository.transition(id, CrashEventStatus.PROCESSING, CrashEventStatus.RECEIVED)).thenReturn(1);
+
+        sweepService.sweep();
+
+        verify(ingestionService).onCancellationWindowExpired(id);
+    }
+
+    @Test
+    @DisplayName("sweep — stuck crash that someone else already moved is left alone")
+    void sweep_stuckAlreadyMoved() {
+        UUID id = UUID.randomUUID();
+        processing(crash(id, CrashEventStatus.PROCESSING, 300));
+        when(crashEventRepository.transition(id, CrashEventStatus.PROCESSING, CrashEventStatus.RECEIVED)).thenReturn(0);
+
+        sweepService.sweep();
+
+        verify(ingestionService, never()).onCancellationWindowExpired(any());
+    }
+
+    @Test
+    @DisplayName("sweep — only PROCESSING crashes older than a minute count as stuck")
+    void sweep_stuckUsesOneMinuteCutoff() {
+        Instant before = Instant.now();
+
+        sweepService.sweep();
+
+        ArgumentCaptor<Instant> cutoff = ArgumentCaptor.forClass(Instant.class);
+        verify(crashEventRepository).findByStatusAndCancellationDeadlineBefore(
+                eq(CrashEventStatus.PROCESSING), cutoff.capture());
+        assertThat(Duration.between(cutoff.getValue(), before).toMillis())
+                .isBetween(CrashSweepService.STUCK_PROCESSING_SECONDS * 1000 - 500,
+                        CrashSweepService.STUCK_PROCESSING_SECONDS * 1000 + 2000);
+    }
+
+    @Test
+    @DisplayName("sweep — a failing retry does not stop the sweep")
+    void sweep_stuckRetryFailureIsCaught() {
+        UUID bad = UUID.randomUUID();
+        UUID good = UUID.randomUUID();
+        processing(crash(bad, CrashEventStatus.PROCESSING, 300), crash(good, CrashEventStatus.PROCESSING, 300));
+        when(crashEventRepository.transition(any(), eq(CrashEventStatus.PROCESSING), eq(CrashEventStatus.RECEIVED)))
+                .thenReturn(1);
+        doThrow(new RuntimeException("boom")).when(ingestionService).onCancellationWindowExpired(bad);
+
+        sweepService.sweep();
+
+        verify(ingestionService).onCancellationWindowExpired(good);
+    }
+
+    // ══════════════════ too old ══════════════════
+
+    @Test
+    @DisplayName("sweep — a RECEIVED crash older than 30 minutes is closed, not dispatched")
+    void sweep_oldReceivedIsExpired() {
+        UUID id = UUID.randomUUID();
+        received(crash(id, CrashEventStatus.RECEIVED, 2 * 60 * 60));
+
+        sweepService.sweep();
+
+        verify(ingestionService).expireStaleCrash(id);
+        verify(ingestionService, never()).onCancellationWindowExpired(any());
+    }
+
+    @Test
+    @DisplayName("sweep — a PROCESSING crash older than 30 minutes is closed, not retried")
+    void sweep_oldProcessingIsExpired() {
+        UUID id = UUID.randomUUID();
+        processing(crash(id, CrashEventStatus.PROCESSING, 2 * 60 * 60));
+
+        sweepService.sweep();
+
+        verify(ingestionService).expireStaleCrash(id);
+        verify(ingestionService, never()).onCancellationWindowExpired(any());
+        verify(crashEventRepository, never()).transition(any(), any(), any());
     }
 }

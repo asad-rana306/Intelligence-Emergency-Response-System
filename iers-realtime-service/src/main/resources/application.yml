@@ -27,7 +27,7 @@ spring:
 
   # ── Kafka Consumer ──
   kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
     consumer:
       group-id: realtime-group
       # A new group starts at "now". Old events are history, not news.

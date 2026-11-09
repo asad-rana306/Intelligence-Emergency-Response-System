@@ -36,6 +36,7 @@ import static com.iers.realtime.store.LiveStateStore.OFFER;
  *   INCIDENT_OFFERED / OFFER_EXPIRED ....... the offered responder
  *   INCIDENT_STAND_DOWN / BYSTANDER_ASSISTING  the responder
  *   INCIDENT_STATUS ........................ the driver and the responder
+ *   CHAT_MESSAGE ........................... the driver and the responder (PHASE 6, no snapshot)
  *   CRASH_DETECTED / CRASH_CANCELLED ....... nobody (they only tidy the snapshot)
  *
  * Two safety rules:
@@ -82,6 +83,7 @@ public class FanOutService {
             case INCIDENT_STAND_DOWN -> onStandDown(e, fresh);
             case BYSTANDER_ASSISTING -> onBystander(e, fresh);
             case NO_RESPONDER_AVAILABLE -> onNoResponder(e, fresh);
+            case CHAT_MESSAGE -> onChat(e, fresh);
             default -> log.debug("Ignoring event type {}", e.eventType());
         }
     }
@@ -259,6 +261,18 @@ public class FanOutService {
         push(fresh, driver, e, map("incidentId", incidentId));
     }
 
+    /**
+     * Both people get it, the sender too: a second phone of the same person stays in sync, and the
+     * sender's app recognises its own message by clientMessageId. The history lives in Dispatch,
+     * so nothing goes into the snapshot.
+     */
+    private void onChat(KafkaEvent e, boolean fresh) {
+        Map<String, Object> data = new LinkedHashMap<>(e.data());
+        data.putIfAbsent("incidentId", incidentIdOf(e));
+        push(fresh, e.driverId(), e, data);
+        push(fresh, e.responderId(), e, data);
+    }
+
     // ───────────────────────────────── helpers ─────────────────────────────────
 
     private boolean isFresh(KafkaEvent e) {
@@ -289,6 +303,10 @@ public class FanOutService {
     /** Same Kafka event + same person = same eventId, so a phone can drop a repeat. */
     static String eventId(KafkaEvent e, String userId) {
         String ref = e.incidentId() != null ? e.incidentId() : e.crashEventId();
+        Object messageId = e.data().get("messageId");
+        if (CHAT_MESSAGE.equals(e.eventType()) && messageId != null) {
+            ref = messageId.toString(); // two messages in the same instant are still two events
+        }
         String seed = e.eventType() + "|" + ref + "|" + e.timestamp() + "|" + userId;
         return UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)).toString();
     }

@@ -101,6 +101,14 @@ public class DispatchOrchestrator {
 
         UUID driverId = event.getDriverId() != null ? UUID.fromString(event.getDriverId()) : null;
 
+        // One driver = one open incident. If help is already on the way for this driver, a second
+        // severe crash is the same emergency (or a retry). It must not send a second ambulance.
+        if (driverId != null && incidentRepository
+                .findFirstByDriverIdAndStatusInOrderByCreatedAtDesc(driverId, IncidentService.ACTIVE).isPresent()) {
+            log.warn("Driver {} already has an open incident — ignoring new crash {}", driverId, crashEventId);
+            return;
+        }
+
         // ── Fetch medical profile from Auth (circuit-broken) ──
         MedicalProfileDto medProfile = driverId != null
                 ? authServiceClient.getMedicalProfile(driverId)
@@ -245,6 +253,65 @@ public class DispatchOrchestrator {
         dispatchToNearest(incidentId);
 
         return ack(incidentId, "REJECTED", "Dispatch rejected. Escalating to next responder.");
+    }
+
+    /**
+     * PHASE 6: "Accept again" from the responder's history.
+     * A responder who rejected (or missed) an offer may still take the emergency, as long as nobody
+     * has accepted it yet. If another responder is being asked right now, that offer is taken back
+     * (they get INCIDENT_OFFER_EXPIRED). Then this responder is assigned and it is ACCEPTED at once.
+     *   403 never offered to you · 409 already taken, finished, or you are busy with another one.
+     */
+    @Transactional
+    public DispatchAckResponse reacceptDispatch(UUID incidentId, UUID responderId) {
+        Incident incident = findIncident(incidentId);
+
+        // Still their own open offer: a normal accept.
+        if (responderId.equals(incident.getAssignedResponderId())
+                && incident.getStatus() == IncidentStatus.DISPATCHED) {
+            return acceptDispatch(incidentId, responderId);
+        }
+        if (!attemptRepository.existsByIncidentIdAndResponderId(incidentId, responderId)) {
+            throw new IncidentAccessDeniedException("This emergency was never offered to you");
+        }
+        if (incidentRepository.findFirstByAssignedResponderIdAndStatusInOrderByCreatedAtDesc(
+                responderId, IncidentService.ACCEPTED_AND_ON).isPresent()) {
+            throw new InvalidIncidentStateException("Finish your current emergency first");
+        }
+
+        // Somebody else is being asked right now: take the offer back from them.
+        if (incident.getStatus() == IncidentStatus.DISPATCHED && incident.getAssignedResponderId() != null) {
+            releaseOffer(incident, incident.getAssignedResponderId(), DispatchResponseType.TIMED_OUT);
+            incident = findIncident(incidentId);
+        }
+        if (incident.getStatus() != IncidentStatus.DISPATCHING) {
+            throw new InvalidIncidentStateException(
+                    "This emergency is " + incident.getStatus() + " now. It cannot be taken again.");
+        }
+
+        ResponderLocation me = spatialQueryService.findLocation(responderId);
+        if (me == null) {
+            throw new InvalidIncidentStateException("Go on duty once (so Dispatch knows your vehicle), then try again");
+        }
+
+        Instant now = Instant.now();
+        int claimed = incidentRepository.claimOffer(incidentId,
+                IncidentStatus.DISPATCHING, IncidentStatus.DISPATCHED,
+                responderId, me.getUserName(), me.getPhone(), me.getVehicleId(),
+                now.plusSeconds(offerSeconds));
+        if (claimed == 0) {
+            throw new InvalidIncidentStateException("This emergency changed just now. Open it again.");
+        }
+        attemptRepository.save(DispatchAttempt.builder()
+                .incidentId(incidentId)
+                .responderId(responderId)
+                .attemptNumber(attemptRepository.countByIncidentId(incidentId) + 1)
+                .sentAt(now)
+                .response(DispatchResponseType.PENDING)
+                .build());
+        log.info("Responder {} takes incident {} again from their history", responderId, incidentId);
+
+        return acceptDispatch(incidentId, responderId);
     }
 
     @Transactional

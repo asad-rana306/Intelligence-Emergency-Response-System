@@ -1,0 +1,72 @@
+# ═══════════════════════════════════════════════════════════════
+#  IERS Realtime Service — Configuration
+# ═══════════════════════════════════════════════════════════════
+#  Gives every phone one private live channel (WebSocket + STOMP).
+#  Reads Kafka (crash-events, incident-events) and pushes each event
+#  to exactly the people it is meant for.
+#
+#  ENVIRONMENT VARIABLES:
+#    REDIS_HOST / REDIS_PORT / REDIS_PASSWORD
+#    KAFKA_BOOTSTRAP
+#    EUREKA_URL
+# ═══════════════════════════════════════════════════════════════
+
+server:
+  port: 8084
+
+spring:
+  application:
+    name: realtime-service
+
+  # ── Redis (catch-up snapshot per user + who is in which call) ──
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+
+  # ── Kafka Consumer ──
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
+    consumer:
+      group-id: realtime-group
+      # A new group starts at "now". Old events are history, not news.
+      # (After a restart the group continues where it stopped.)
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+# ── Realtime settings (all optional, these are the defaults) ──
+realtime:
+  kafka:
+    crash-topic: crash-events
+    incident-topic: incident-events
+    group-id: realtime-group
+  snapshot-ttl-minutes: 120     # how long a user's catch-up snapshot is kept
+  max-push-age-seconds: 120     # older Kafka events update the snapshot but are not pushed
+  snapshot-delay-ms: 300        # wait after SUBSCRIBE before sending the SNAPSHOT
+
+# ── Eureka ──
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+    fetch-registry: true
+    register-with-eureka: true
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${random.uuid}
+
+# ── Actuator ──
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics
+
+# ── Logging ──
+logging:
+  level:
+    root: INFO
+    com.iers.realtime: DEBUG
+    org.apache.kafka: WARN

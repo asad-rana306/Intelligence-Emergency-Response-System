@@ -1,6 +1,7 @@
 package com.iers.iot.controller;
 
 import com.iers.iot.dto.request.CrashPayloadRequest;
+import com.iers.iot.dto.request.PhoneCrashRequest;
 import com.iers.iot.dto.request.SmsCrashRequest;
 import com.iers.iot.dto.response.CrashAckResponse;
 import com.iers.iot.service.CrashIngestionService;
@@ -37,6 +38,29 @@ public class CrashController {
 
         CrashAckResponse response = ingestionService.ingestHttpCrash(deviceId, request);
 
+        if ("DUPLICATE".equals(response.getStatus())) {
+            return ResponseEntity.ok(response);
+        }
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
+    }
+
+    /**
+     * PHASE 6: the driver's phone works as the car box (or the driver held SOS).
+     * Phone login (JWT), not the device key. Only drivers. Same replies as the box.
+     */
+    @PostMapping("/phone")
+    public ResponseEntity<CrashAckResponse> ingestPhoneCrash(
+            @RequestHeader("X-User-Id") UUID userId,
+            @RequestHeader(value = "X-User-Role", defaultValue = "UNKNOWN") String role,
+            @Valid @RequestBody PhoneCrashRequest request) {
+
+        if (!"DRIVER".equalsIgnoreCase(role)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(CrashAckResponse.builder()
+                    .status("FORBIDDEN").message("Only a driver's phone can report a crash").build());
+        }
+        log.info("Phone crash received: user={}, manual={}, gForce={}", userId, request.isManualSos(), request.getGForce());
+
+        CrashAckResponse response = ingestionService.ingestPhoneCrash(userId, request);
         if ("DUPLICATE".equals(response.getStatus())) {
             return ResponseEntity.ok(response);
         }

@@ -12,6 +12,8 @@ import com.iers.dispatch.exception.IncidentNotFoundException;
 import com.iers.dispatch.exception.InvalidIncidentStateException;
 import com.iers.dispatch.service.DispatchOrchestrator;
 import com.iers.dispatch.service.IncidentService;
+import com.iers.dispatch.service.ResponderHistoryService;
+import com.iers.dispatch.dto.response.ResponderHistoryItem;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,6 +24,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -40,6 +43,7 @@ class DispatchControllerTest {
     @Autowired private ObjectMapper objectMapper;
     @MockBean private DispatchOrchestrator orchestrator;
     @MockBean private IncidentService incidentService;
+    @MockBean private ResponderHistoryService historyService;
 
     private final UUID incidentId = UUID.randomUUID();
     private final UUID responderId = UUID.randomUUID();
@@ -281,5 +285,41 @@ class DispatchControllerTest {
         mockMvc.perform(get("/api/dispatch/offers/current")
                         .header("X-User-Id", responderId.toString()))
                 .andExpect(status().isNoContent());
+    }
+
+    // ── PHASE 6: history and accept again ──
+
+    @Test
+    @DisplayName("GET /history — the responder's list")
+    void history_list() throws Exception {
+        when(historyService.history(responderId)).thenReturn(List.of(new ResponderHistoryItem(
+                incidentId.toString(), "DISPATCHING", "REJECTED", "2026-10-31T10:00:00Z", "2026-10-31T10:00:05Z",
+                "Ali Khan", 31.52, 74.35, 4, false, true, "2026-10-31T09:59:50Z")));
+
+        mockMvc.perform(get("/api/dispatch/history").header("X-User-Id", responderId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].incidentId").value(incidentId.toString()))
+                .andExpect(jsonPath("$[0].myResponse").value("REJECTED"))
+                .andExpect(jsonPath("$[0].canAcceptAgain").value(true));
+    }
+
+    @Test
+    @DisplayName("POST /reaccept — 200 ACCEPTED")
+    void reaccept_ok() throws Exception {
+        when(orchestrator.reacceptDispatch(incidentId, responderId)).thenReturn(ack("ACCEPTED"));
+
+        mockMvc.perform(post("/api/dispatch/{id}/reaccept", incidentId).header("X-User-Id", responderId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACCEPTED"));
+    }
+
+    @Test
+    @DisplayName("POST /reaccept — 409 when somebody else already accepted")
+    void reaccept_taken() throws Exception {
+        when(orchestrator.reacceptDispatch(incidentId, responderId))
+                .thenThrow(new InvalidIncidentStateException("This emergency is ACCEPTED now. It cannot be taken again."));
+
+        mockMvc.perform(post("/api/dispatch/{id}/reaccept", incidentId).header("X-User-Id", responderId.toString()))
+                .andExpect(status().isConflict());
     }
 }

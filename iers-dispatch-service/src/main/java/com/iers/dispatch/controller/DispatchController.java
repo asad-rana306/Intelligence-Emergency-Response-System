@@ -4,13 +4,16 @@ import com.iers.dispatch.dto.Viewer;
 import com.iers.dispatch.dto.request.UpdateIncidentStatusRequest;
 import com.iers.dispatch.dto.response.DispatchAckResponse;
 import com.iers.dispatch.dto.response.IncidentResponse;
+import com.iers.dispatch.dto.response.ResponderHistoryItem;
 import com.iers.dispatch.service.DispatchOrchestrator;
 import com.iers.dispatch.service.IncidentService;
+import com.iers.dispatch.service.ResponderHistoryService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -24,6 +27,7 @@ public class DispatchController {
 
     private final DispatchOrchestrator orchestrator;
     private final IncidentService incidentService;
+    private final ResponderHistoryService historyService;
 
     /** The offer waiting for this responder, or 204. */
     @GetMapping("/offers/current")
@@ -53,6 +57,20 @@ public class DispatchController {
             @PathVariable UUID incidentId,
             @RequestHeader("X-User-Id") UUID responderId) {
         return ResponseEntity.ok(orchestrator.rejectDispatch(incidentId, responderId));
+    }
+
+    /** PHASE 6: every emergency offered to this responder, newest first. */
+    @GetMapping("/history")
+    public List<ResponderHistoryItem> history(@RequestHeader("X-User-Id") UUID responderId) {
+        return historyService.history(responderId);
+    }
+
+    /** PHASE 6: "Accept again" from the history (only while nobody else accepted it). */
+    @PostMapping("/{incidentId}/reaccept")
+    public ResponseEntity<DispatchAckResponse> reaccept(
+            @PathVariable UUID incidentId,
+            @RequestHeader("X-User-Id") UUID responderId) {
+        return ResponseEntity.ok(orchestrator.reacceptDispatch(incidentId, responderId));
     }
 
     /**

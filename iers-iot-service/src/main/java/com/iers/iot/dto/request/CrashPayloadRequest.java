@@ -1,12 +1,14 @@
 package com.iers.iot.dto.request;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotNull;
 import lombok.*;
 import java.util.Map;
 
 @Data @NoArgsConstructor @AllArgsConstructor @Builder
 public class CrashPayloadRequest {
-    @NotNull private Double gForce;
+    /** Lombok makes the getter getGForce(), and Jackson would then read the key "gforce". The contract key is "gForce", so name it. */
+    @NotNull @JsonProperty("gForce") private Double gForce;
     @NotNull private Double rolloverAngle;
     @NotNull private Double speed;
     @NotNull private Double gpsLat;

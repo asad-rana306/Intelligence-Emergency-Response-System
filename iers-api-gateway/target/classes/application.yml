@@ -73,6 +73,11 @@ spring:
                 name: authCircuitBreaker
                 fallbackUri: forward:/fallback/auth
 
+        - id: realtime-websocket
+          uri: lb:ws://realtime-service
+          predicates:
+            - Path=/ws/live/websocket
+
         - id: auth-emergency-contacts
           uri: lb://auth-service
           predicates:

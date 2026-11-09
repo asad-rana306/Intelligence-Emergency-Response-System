@@ -18,6 +18,9 @@ public interface CrashEventRepository extends JpaRepository<CrashEvent, UUID> {
     /** The device's newest crash (used by the box's cancel button). */
     Optional<CrashEvent> findFirstByDeviceIdOrderByCreatedAtDesc(String deviceId);
 
+    /** The driver's newest crash from any of their devices (box or phone). PHASE 6. */
+    Optional<CrashEvent> findFirstByDriverIdOrderByCreatedAtDesc(UUID driverId);
+
     /** Crashes still waiting in the window whose deadline already passed (used by the sweep). */
     List<CrashEvent> findByStatusAndCancellationDeadlineBefore(CrashEventStatus status, Instant deadline);
 
@@ -33,4 +36,3 @@ public interface CrashEventRepository extends JpaRepository<CrashEvent, UUID> {
                    @Param("fromStatus") CrashEventStatus from,
                    @Param("toStatus") CrashEventStatus to);
 }
-

@@ -408,4 +408,30 @@ class FanOutServiceTest {
         List<LiveEvent> sent = captor.getAllValues();
         assertThat(sent.get(0).eventId()).isNotEqualTo(sent.get(1).eventId());
     }
+
+    // ───────────────────────── PHASE 6: chat ─────────────────────────
+
+    @Test
+    @DisplayName("CHAT_MESSAGE goes to the driver and the responder, nobody else, and leaves no snapshot")
+    void chat_toBothPeople() {
+        fanOut.handle(event(incidentJson("CHAT_MESSAGE", RESPONDER,
+                "{\"messageId\":\"m-1\",\"kind\":\"TEXT\",\"text\":\"On my way\",\"senderRole\":\"RESPONDER\"}")));
+
+        LiveEvent toDriver = pushedTo(DRIVER);
+        LiveEvent toResponder = pushedTo(RESPONDER);
+        assertThat(toDriver.type()).isEqualTo("CHAT_MESSAGE");
+        assertThat(toDriver.data()).containsEntry("text", "On my way").containsEntry("incidentId", INCIDENT);
+        assertThat(toResponder.data()).containsEntry("messageId", "m-1");
+        verify(publisher, never()).sendEvent(eq(OTHER), any());
+        assertThat(store.loadSnapshot(DRIVER)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Two chat messages in the same instant get different eventIds")
+    void chat_eventIdPerMessage() {
+        KafkaEvent a = event(incidentJson("CHAT_MESSAGE", RESPONDER, "{\"messageId\":\"m-1\"}"));
+        KafkaEvent b = event(incidentJson("CHAT_MESSAGE", RESPONDER, "{\"messageId\":\"m-2\"}"));
+
+        assertThat(FanOutService.eventId(a, DRIVER)).isNotEqualTo(FanOutService.eventId(b, DRIVER));
+    }
 }

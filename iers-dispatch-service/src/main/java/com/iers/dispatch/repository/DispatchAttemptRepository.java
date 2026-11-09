@@ -11,4 +11,7 @@ public interface DispatchAttemptRepository extends JpaRepository<DispatchAttempt
 
     /** Has this responder ever been offered this incident? (Tells "offer expired" 409 from "not yours" 403.) */
     boolean existsByIncidentIdAndResponderId(UUID incidentId, UUID responderId);
+
+    /** PHASE 6: this responder's newest offers (their history screen). */
+    List<DispatchAttempt> findTop100ByResponderIdOrderBySentAtDesc(UUID responderId);
 }

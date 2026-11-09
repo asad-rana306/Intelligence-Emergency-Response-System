@@ -180,6 +180,38 @@ class DispatchOrchestratorTest {
     }
 
     @Test
+    @DisplayName("handleCrashDetected — the driver already has an open incident: the new crash is ignored")
+    void handleCrashDetected_driverAlreadyHasOpenIncident() {
+        when(incidentRepository.findFirstByDriverIdAndStatusInOrderByCreatedAtDesc(
+                eq(driverId), eq(IncidentService.ACTIVE)))
+                .thenReturn(Optional.of(incident(IncidentStatus.DISPATCHED, responderId)));
+
+        orchestrator.handleCrashDetected(crashEvent);
+
+        verify(incidentRepository, never()).save(any());
+        verifyNoInteractions(authServiceClient, eventPublisher, spatialQueryService,
+                notificationService, escalationTimerService);
+    }
+
+    @Test
+    @DisplayName("handleCrashDetected — the driver's last incident is finished: a new crash is handled normally")
+    void handleCrashDetected_previousIncidentFinished() {
+        when(incidentRepository.findFirstByDriverIdAndStatusInOrderByCreatedAtDesc(
+                eq(driverId), eq(IncidentService.ACTIVE))).thenReturn(Optional.empty());
+        when(authServiceClient.getMedicalProfile(driverId)).thenReturn(
+                MedicalProfileDto.builder().bloodType("O+").allergies("None").build());
+        when(authServiceClient.getEmergencyContacts(driverId)).thenReturn(Collections.emptyList());
+        stubSaveAndFind();
+        when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(responderA);
+        stubClaim(1);
+
+        orchestrator.handleCrashDetected(crashEvent);
+
+        verify(incidentRepository).save(any(Incident.class));
+        verify(eventPublisher).publish(eq("INCIDENT_CREATED"), any(Incident.class), isNull(), anyMap());
+    }
+
+    @Test
     @DisplayName("handleCrashDetected — Auth down: medical UNKNOWN, no SMS, dispatch still happens")
     void handleCrashDetected_authDown_fallback() {
         when(authServiceClient.getMedicalProfile(driverId)).thenReturn(
@@ -811,5 +843,94 @@ class DispatchOrchestratorTest {
         assertThatThrownBy(() -> orchestrator.markBystanderAssisting(
                 incidentId, new Viewer(driverId, "DRIVER")))
                 .isInstanceOf(IncidentNotFoundException.class);
+    }
+
+    // ══════════════════ PHASE 6: accept again from history ══════════════════
+
+    @Test
+    @DisplayName("reaccept — still my open offer: a normal accept")
+    void reaccept_ownOffer() {
+        stubFindById(incident(IncidentStatus.DISPATCHED, responderId));
+        when(incidentRepository.acceptOffer(eq(incidentId), eq(responderId), eq(IncidentStatus.DISPATCHED),
+                eq(IncidentStatus.ACCEPTED), any(Instant.class))).thenReturn(1);
+
+        DispatchAckResponse r = orchestrator.reacceptDispatch(incidentId, responderId);
+
+        assertThat(r.getStatus()).isEqualTo("ACCEPTED");
+        verify(incidentRepository, never()).claimOffer(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("reaccept — never offered to me: 403")
+    void reaccept_neverOffered() {
+        stubFindById(incident(IncidentStatus.DISPATCHING, null));
+        when(attemptRepository.existsByIncidentIdAndResponderId(incidentId, responderId)).thenReturn(false);
+
+        assertThatThrownBy(() -> orchestrator.reacceptDispatch(incidentId, responderId))
+                .isInstanceOf(IncidentAccessDeniedException.class);
+    }
+
+    @Test
+    @DisplayName("reaccept — somebody else already accepted: 409")
+    void reaccept_alreadyTaken() {
+        stubFindById(incident(IncidentStatus.ACCEPTED, otherResponderId));
+        when(attemptRepository.existsByIncidentIdAndResponderId(incidentId, responderId)).thenReturn(true);
+
+        assertThatThrownBy(() -> orchestrator.reacceptDispatch(incidentId, responderId))
+                .isInstanceOf(InvalidIncidentStateException.class);
+        verify(incidentRepository, never()).claimOffer(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("reaccept — I am busy with another emergency: 409")
+    void reaccept_busy() {
+        stubFindById(incident(IncidentStatus.DISPATCHING, null));
+        when(attemptRepository.existsByIncidentIdAndResponderId(incidentId, responderId)).thenReturn(true);
+        when(incidentRepository.findFirstByAssignedResponderIdAndStatusInOrderByCreatedAtDesc(
+                eq(responderId), eq(IncidentService.ACCEPTED_AND_ON)))
+                .thenReturn(Optional.of(incident(IncidentStatus.ACCEPTED, responderId)));
+
+        assertThatThrownBy(() -> orchestrator.reacceptDispatch(incidentId, responderId))
+                .isInstanceOf(InvalidIncidentStateException.class);
+    }
+
+    @Test
+    @DisplayName("reaccept — another responder is being asked: their offer is taken back, I get it ACCEPTED")
+    void reaccept_takesBackOffer() {
+        Incident askingOther = incident(IncidentStatus.DISPATCHED, otherResponderId);
+        Incident waiting = incident(IncidentStatus.DISPATCHING, null);
+        Incident offeredToMe = incident(IncidentStatus.DISPATCHED, responderId);
+        when(incidentRepository.findById(incidentId)).thenReturn(
+                Optional.of(askingOther), Optional.of(waiting), Optional.of(offeredToMe));
+        when(attemptRepository.existsByIncidentIdAndResponderId(incidentId, responderId)).thenReturn(true);
+        when(incidentRepository.releaseOffer(eq(incidentId), eq(otherResponderId), eq(IncidentStatus.DISPATCHED),
+                eq(IncidentStatus.DISPATCHING), any(Instant.class))).thenReturn(1);
+        when(spatialQueryService.findLocation(responderId)).thenReturn(responderA);
+        stubClaim(1);
+        when(incidentRepository.acceptOffer(eq(incidentId), eq(responderId), eq(IncidentStatus.DISPATCHED),
+                eq(IncidentStatus.ACCEPTED), any(Instant.class))).thenReturn(1);
+
+        DispatchAckResponse r = orchestrator.reacceptDispatch(incidentId, responderId);
+
+        assertThat(r.getStatus()).isEqualTo("ACCEPTED");
+        verify(eventPublisher).publish(eq("INCIDENT_OFFER_EXPIRED"), any(Incident.class), eq(otherResponderId), anyMap());
+        verify(incidentRepository).claimOffer(eq(incidentId), eq(IncidentStatus.DISPATCHING),
+                eq(IncidentStatus.DISPATCHED), eq(responderId), eq("Responder A"), eq("+923001111111"),
+                eq("AMB-001"), any(Instant.class));
+        verify(eventPublisher).publish(eq("INCIDENT_ACCEPTED"), any(Incident.class), eq(responderId), anyMap());
+        verify(attemptRepository).save(argThat(a -> a.getResponderId().equals(responderId)
+                && a.getResponse() == DispatchResponseType.PENDING));
+    }
+
+    @Test
+    @DisplayName("reaccept — Dispatch never saw my vehicle: 409, nothing claimed")
+    void reaccept_noLocation() {
+        stubFindById(incident(IncidentStatus.DISPATCHING, null));
+        when(attemptRepository.existsByIncidentIdAndResponderId(incidentId, responderId)).thenReturn(true);
+        when(spatialQueryService.findLocation(responderId)).thenReturn(null);
+
+        assertThatThrownBy(() -> orchestrator.reacceptDispatch(incidentId, responderId))
+                .isInstanceOf(InvalidIncidentStateException.class);
+        verify(incidentRepository, never()).claimOffer(any(), any(), any(), any(), any(), any(), any(), any());
     }
 }
