@@ -1,15 +1,4 @@
-# ═══════════════════════════════════════════════════════════════
-#  IERS IoT & Telemetry Service — Configuration
-# ═══════════════════════════════════════════════════════════════
-#  ENVIRONMENT VARIABLES:
-#    DB_HOST / DB_PORT / DB_NAME / DB_USERNAME / DB_PASSWORD
-#    REDIS_HOST / REDIS_PORT / REDIS_PASSWORD
-#    KAFKA_BOOTSTRAP   — Kafka broker(s) (default: localhost:9092)
-#    ML_SERVICE_URL     — Python ML container (default: http://localhost:8000)
-#    EUREKA_URL
-# ═══════════════════════════════════════════════════════════════
-
-server:
+6server:
   port: 8082
 
 spring:
