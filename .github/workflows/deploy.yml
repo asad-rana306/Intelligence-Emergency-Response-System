@@ -28,12 +28,13 @@ jobs:
             set -e
             cd ~/iers
 
-            # 1. Reclaim ownership of ~/iers/secrets (Docker created it as root), remove accidental directory, and write Firebase JSON
+            # 1. Reclaim ownership of ~/iers/secrets, remove accidental directory, and write Firebase JSON
             sudo mkdir -p ~/iers/secrets
             sudo chown -R "$(whoami):$(whoami)" ~/iers/secrets
+            chmod 755 ~/iers/secrets
             rm -rf ~/iers/secrets/firebase-service-account.json
             printf '%s\n' "$FIREBASE_SERVICE_ACCOUNT" > ~/iers/secrets/firebase-service-account.json
-            chmod 600 ~/iers/secrets/firebase-service-account.json
+            chmod 644 ~/iers/secrets/firebase-service-account.json
 
             # 2. Update SimGate & Firebase variables in ~/iers/.env without erasing existing keys
             touch ~/iers/.env
