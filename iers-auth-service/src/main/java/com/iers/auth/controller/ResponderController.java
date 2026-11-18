@@ -18,6 +18,13 @@ public class ResponderController {
 
     private final ResponderService responderService;
 
+    /** My status, shift start/end and seconds left. */
+    @GetMapping("/me")
+    public ResponseEntity<ResponderProfileResponse> me(
+            @RequestHeader("X-User-Id") String userId) {
+        return ResponseEntity.ok(responderService.getProfile(UUID.fromString(userId)));
+    }
+
     @PutMapping("/status")
     public ResponseEntity<ResponderProfileResponse> updateStatus(
             @RequestHeader("X-User-Id") String userId,
@@ -32,5 +39,12 @@ public class ResponderController {
             @Valid @RequestBody UpdateLocationRequest request) {
         return ResponseEntity.ok(
                 responderService.updateLocation(UUID.fromString(userId), request));
+    }
+
+    /** Sent about every 30 seconds by the background service. No body. */
+    @PostMapping("/heartbeat")
+    public ResponseEntity<ResponderProfileResponse> heartbeat(
+            @RequestHeader("X-User-Id") String userId) {
+        return ResponseEntity.ok(responderService.heartbeat(UUID.fromString(userId)));
     }
 }

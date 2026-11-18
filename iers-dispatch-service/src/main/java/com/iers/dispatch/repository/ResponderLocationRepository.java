@@ -12,6 +12,9 @@ public interface ResponderLocationRepository extends JpaRepository<ResponderLoca
 
     Optional<ResponderLocation> findByResponderId(UUID responderId);
 
+    /** Rows with this duty status (the sync uses it to find who must go OFF_DUTY). */
+    List<ResponderLocation> findByDutyStatus(String dutyStatus);
+
     /**
      * PostGIS spatial query: find nearest ON_DUTY responders by real-world distance.
      * Uses ST_DistanceSphere for accurate great-circle distance calculation.

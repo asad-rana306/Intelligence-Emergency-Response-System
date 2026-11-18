@@ -52,6 +52,12 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
+        <!-- ====== KAFKA (duty events: DUTY_EXPIRED / DUTY_CHANGED) ====== -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
         <!-- ====== SERVICE DISCOVERY ====== -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>

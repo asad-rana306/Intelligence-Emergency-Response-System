@@ -12,6 +12,18 @@
 #    REDIS_PORT       — Redis port (default: 6379)
 #    REDIS_PASSWORD   — Redis password (default: blank)
 #    EUREKA_URL       — Eureka server URL
+#
+#  SMS (one-time codes):
+#    SMS_PROVIDER     — "log" (default, prints the code in the log: DEV ONLY) or "simgate"
+#    SIMGATE_API_KEY  — SimGate API key (required when SMS_PROVIDER=simgate)
+#    SIMGATE_DEVICE_ID— SimGate device id, e.g. android-0cb6ebcfbefac2b2
+#    OTP_REQUIRED     — "true" (default): registration needs a verified phone
+#    DEFAULT_COUNTRY_CODE — used for numbers typed as 03xx... (default: 92)
+#
+#  Responder duty:
+#    DUTY_MAX_HOURS   — length of one shift (default: 1)
+#    DUTY_EVENTS_ENABLED — "true" publishes duty events to Kafka (default: false)
+#    KAFKA_BOOTSTRAP  — Kafka address (default: localhost:9092)
 # ═══════════════════════════════════════════════════════════════
 
 server:
@@ -44,12 +56,66 @@ spring:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
 
+  # ── Kafka (producer only, used for duty events) ──
+  # Short timeouts: if Kafka is down, the duty sweep must not freeze waiting for it.
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        max.block.ms: 3000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
+
 # ── JWT ──
 auth:
   jwt:
     secret: ${JWT_SECRET:<YOUR_JWT_SECRET_MIN_32_CHARS>}
     access-token-expiry: PT15M    # 15 minutes
     refresh-token-expiry: P7D     # 7 days
+
+  # ── Phone numbers ──
+  phone:
+    default-country-code: ${DEFAULT_COUNTRY_CODE:92}   # 0300... becomes +92300...
+
+  # ── SMS one-time codes ──
+  otp:
+    required-on-register: ${OTP_REQUIRED:true}
+    code-length: 6
+    code-ttl: 5m               # how long a code works
+    max-verify-attempts: 5     # wrong guesses allowed per code
+    max-sends-per-window: 3    # codes per phone per send-window
+    send-window: 1h
+    resend-cooldown: 30s       # minimum time between two codes
+    verified-ttl: 10m          # time to finish registration after verifying
+
+  # ── SMS gateway ──
+  sms:
+    provider: ${SMS_PROVIDER:log}        # log | simgate
+    simgate:
+      base-url: https://api.simgate.app
+      api-key: ${SIMGATE_API_KEY:}
+      device-id: ${SIMGATE_DEVICE_ID:}
+      connect-timeout: 3s
+      read-timeout: 10s
+      max-attempts: 2
+
+  # ── Responder duty ──
+  duty:
+    max-on-duty: ${DUTY_MAX_HOURS:1}h    # one shift; the responder must go on duty again after it
+    heartbeat-timeout: 2m                # no heartbeat/location for this long -> OFF duty
+    sweep-lock-ttl: 25s                  # keep shorter than sweep.interval
+    sweep:
+      enabled: true
+      interval: PT30S                    # ISO-8601 (the @Scheduled annotation needs this form)
+    events:
+      enabled: ${DUTY_EVENTS_ENABLED:false}
+      topic: duty-events
+
+  # ── Push tokens ──
+  push:
+    max-tokens-per-user: 5
 
 # ── Eureka ──
 eureka:

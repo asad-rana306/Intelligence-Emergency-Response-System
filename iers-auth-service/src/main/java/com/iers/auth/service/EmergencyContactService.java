@@ -8,6 +8,7 @@ import com.iers.auth.exception.ResourceNotFoundException;
 import com.iers.auth.exception.UnauthorizedException;
 import com.iers.auth.repository.EmergencyContactRepository;
 import com.iers.auth.repository.UserRepository;
+import com.iers.auth.util.PhoneNormalizer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,7 +22,13 @@ public class EmergencyContactService {
 
     private final EmergencyContactRepository contactRepository;
     private final UserRepository userRepository;
+    private final PhoneNormalizer phoneNormalizer;
 
+    /**
+     * The phone is saved in international form (+92...): accident SMS go to this exact text,
+     * and the SMS gateway only accepts that form. A wrong number is rejected with 400 here,
+     * not later when the accident happens.
+     */
     @Transactional
     public EmergencyContactResponse addContact(UUID userId, EmergencyContactRequest request) {
         User user = userRepository.findById(userId)
@@ -30,7 +37,7 @@ public class EmergencyContactService {
         EmergencyContact contact = EmergencyContact.builder()
                 .user(user)
                 .contactName(request.getContactName())
-                .phone(request.getPhone())
+                .phone(phoneNormalizer.normalize(request.getPhone()))
                 .relationship(request.getRelationship())
                 .build();
 

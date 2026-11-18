@@ -93,6 +93,21 @@ public class Incident {
     @Builder.Default
     private Boolean noResponderNotified = false;
 
+    /**
+     * When EVERY emergency contact has been sent the crash SMS (or the driver has no contacts).
+     * Null = still to do. The alert does not depend on an ambulance being found.
+     */
+    @Column(name = "contacts_notified_at")
+    private Instant contactsNotifiedAt;
+
+    /** One worker owns the contact alert until this time. Lets many instances share the work. */
+    @Column(name = "contacts_lease_until")
+    private Instant contactsLeaseUntil;
+
+    /** Phone numbers (comma separated) that already got the crash SMS. A retry skips them. */
+    @Column(name = "contacts_sent", columnDefinition = "TEXT")
+    private String contactsSent;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

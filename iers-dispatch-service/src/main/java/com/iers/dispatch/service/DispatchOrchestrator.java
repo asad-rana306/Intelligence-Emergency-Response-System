@@ -1,7 +1,6 @@
 package com.iers.dispatch.service;
 
 import com.iers.dispatch.dto.Viewer;
-import com.iers.dispatch.dto.feign.EmergencyContactDto;
 import com.iers.dispatch.dto.feign.MedicalProfileDto;
 import com.iers.dispatch.dto.kafka.CrashEventMessage;
 import com.iers.dispatch.dto.kafka.IncidentEventMessage;
@@ -27,7 +26,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -48,6 +46,9 @@ import java.util.UUID;
  *    announces NO_RESPONDER_AVAILABLE once, and keeps trying until the incident is 30 minutes old.
  *  - Responders who rejected are never asked again for the same incident. Responders who only let the
  *    offer time out may be asked again, but only after everybody who was not asked yet.
+ *  - Telling people (SMS to contacts, push to phones) is NotificationService's job. It runs in the
+ *    background after the commit, so a slow SMS gateway can never delay an ambulance, and the
+ *    contacts are alerted even when no ambulance is found.
  */
 @Slf4j
 @Service
@@ -114,11 +115,6 @@ public class DispatchOrchestrator {
                 ? authServiceClient.getMedicalProfile(driverId)
                 : fallbackProfile();
 
-        // ── Fetch emergency contacts (circuit-broken) ──
-        List<EmergencyContactDto> contacts = driverId != null
-                ? authServiceClient.getEmergencyContacts(driverId)
-                : Collections.emptyList();
-
         // ── Create incident ──
         Incident incident = Incident.builder()
                 .crashEventId(crashEventId)
@@ -142,10 +138,10 @@ public class DispatchOrchestrator {
                 data("incidentId", incident.getId().toString(),
                         "crashEventId", crashEventId.toString()));
 
-        // ── Send SMS to emergency contacts ──
-        if (!contacts.isEmpty()) {
-            notificationService.sendEmergencySms(contacts, event.getDriverName(), incident.getId());
-        }
+        // ── Alert the emergency contacts. This does NOT wait for an ambulance and does not run
+        //    inside this transaction: it starts after the commit, in the background, and the sweep
+        //    retries it until every contact has been told. ──
+        notificationService.crashDetected(incident.getId());
 
         // ── Dispatch to nearest responder ──
         dispatchToNearest(incident.getId());
@@ -182,21 +178,15 @@ public class DispatchOrchestrator {
         // Stand down the offered/assigned responder
         UUID responderId = incident.getAssignedResponderId();
         if (responderId != null) {
-            notificationService.sendStandDownPush(responderId, incident.getId());
+            notificationService.standDown(responderId, incident.getId());
             spatialQueryService.markResponderOnDuty(responderId);
             updateAuthStatus(responderId, "ON_DUTY");
             emit(IncidentEventMessage.INCIDENT_STAND_DOWN, incident, responderId,
                     data("incidentId", incident.getId().toString(), "reason", REASON_DRIVER_CANCELLED));
         }
 
-        // Send false alarm SMS to emergency contacts
-        UUID driverId = incident.getDriverId();
-        if (driverId != null) {
-            List<EmergencyContactDto> contacts = authServiceClient.getEmergencyContacts(driverId);
-            if (contacts != null && !contacts.isEmpty()) {
-                notificationService.sendFalseAlarmSms(contacts, incident.getDriverName());
-            }
-        }
+        // Tell the contacts who got the crash SMS that it was a false alarm
+        notificationService.falseAlarm(incident.getId());
 
         gpsStreamingService.cleanupIncident(incident.getId().toString());
         log.info("Incident {} cancelled by user", incident.getId());
@@ -231,6 +221,9 @@ public class DispatchOrchestrator {
                 "vehicleId", incident.getResponderVehicleId());
         emit(IncidentEventMessage.INCIDENT_ACCEPTED, incident, responderId,
                 data("incidentId", incidentId.toString(), "responder", responder));
+
+        // Driver (push) and emergency contacts (SMS) learn that help is on the way
+        notificationService.responderOnTheWay(incidentId, incident.getDriverId(), incident.getResponderName());
 
         log.info("Dispatch ACCEPTED: incident={}, responder={}", incidentId, responderId);
 
@@ -440,15 +433,12 @@ public class DispatchOrchestrator {
                 .response(DispatchResponseType.PENDING)
                 .build());
 
-        // Send push notification
-        notificationService.sendResponderPush(
-                nearest.getResponderId(), nearest.getVehicleId(),
-                incidentId, incident.getDriverName(),
-                incident.getGpsLat(), incident.getGpsLng(),
-                incident.getPriorityScore() != null ? incident.getPriorityScore() : 0);
+        // Ring the responder's phone (push, works when the app is closed)
+        final UUID responderId = nearest.getResponderId();
+        notificationService.offerToResponder(responderId, incidentId,
+                incident.getDriverName(), incident.getGpsLat(), incident.getGpsLng());
 
         // Start the live 30-second timer (the sweep covers a restart)
-        final UUID responderId = nearest.getResponderId();
         escalationTimerService.startEscalationTimer(incidentId, offerSeconds,
                 () -> onOfferTimeout(incidentId, responderId));
 
@@ -572,6 +562,8 @@ public class DispatchOrchestrator {
             log.warn("Nobody accepted incident {} for {} seconds", incident.getId(), noResponderAfterSeconds);
             emit(IncidentEventMessage.NO_RESPONDER_AVAILABLE, incident, null,
                     data("incidentId", incident.getId().toString()));
+            // The contacts must not wait for an ambulance that may never come: tell them to call too.
+            notificationService.noResponderYet(incident.getId());
         }
     }
 

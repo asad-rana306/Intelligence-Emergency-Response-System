@@ -8,6 +8,7 @@ import com.iers.auth.exception.GlobalExceptionHandler;
 import com.iers.auth.exception.ResourceNotFoundException;
 import com.iers.auth.service.EmergencyContactService;
 import com.iers.auth.service.MedicalProfileService;
+import com.iers.auth.service.PushTokenService;
 import com.iers.auth.service.ResponderService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.bean.MockBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
@@ -24,6 +26,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -36,6 +39,7 @@ class InternalApiControllerTest {
     @MockBean private MedicalProfileService medicalProfileService;
     @MockBean private EmergencyContactService contactService;
     @MockBean private ResponderService responderService;
+    @MockBean private PushTokenService pushTokenService;
 
     private final UUID userId = UUID.randomUUID();
 
@@ -115,5 +119,40 @@ class InternalApiControllerTest {
                 .andExpect(status().isNoContent());
 
         verify(responderService).updateStatusByUserId(eq(userId), eq(DutyStatus.ON_MISSION));
+    }
+
+    // ══════════════════ PUSH TOKENS ══════════════════
+
+    @Test
+    @DisplayName("GET /internal/users/{id}/push-tokens — 200 OK with the token list")
+    void getPushTokens_success() throws Exception {
+        when(pushTokenService.tokensOf(userId)).thenReturn(List.of("tok-new", "tok-old"));
+
+        mockMvc.perform(get("/internal/users/{userId}/push-tokens", userId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0]").value("tok-new"))
+                .andExpect(jsonPath("$[1]").value("tok-old"));
+    }
+
+    @Test
+    @DisplayName("POST /internal/push-tokens/invalidate — 204 and tokens are removed")
+    void invalidatePushTokens_success() throws Exception {
+        mockMvc.perform(post("/internal/push-tokens/invalidate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tokens\":[\"dead-1\",\"dead-2\"]}"))
+                .andExpect(status().isNoContent());
+
+        verify(pushTokenService).invalidate(List.of("dead-1", "dead-2"));
+    }
+
+    @Test
+    @DisplayName("POST /internal/push-tokens/invalidate — 400 when the list is empty")
+    void invalidatePushTokens_empty() throws Exception {
+        mockMvc.perform(post("/internal/push-tokens/invalidate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"tokens\":[]}"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(pushTokenService);
     }
 }

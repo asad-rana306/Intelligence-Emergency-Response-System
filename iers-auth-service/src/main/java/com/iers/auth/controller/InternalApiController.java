@@ -1,12 +1,15 @@
 package com.iers.auth.controller;
 
+import com.iers.auth.dto.request.InvalidateTokensRequest;
 import com.iers.auth.dto.response.AvailableResponderResponse;
 import com.iers.auth.dto.response.EmergencyContactResponse;
 import com.iers.auth.dto.response.MedicalProfileResponse;
 import com.iers.auth.entity.enums.DutyStatus;
 import com.iers.auth.service.EmergencyContactService;
 import com.iers.auth.service.MedicalProfileService;
+import com.iers.auth.service.PushTokenService;
 import com.iers.auth.service.ResponderService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -29,6 +32,7 @@ public class InternalApiController {
     private final MedicalProfileService medicalProfileService;
     private final EmergencyContactService contactService;
     private final ResponderService responderService;
+    private final PushTokenService pushTokenService;
 
     /**
      * Dispatch Service calls this to get the crash victim's medical info.
@@ -41,6 +45,7 @@ public class InternalApiController {
 
     /**
      * Dispatch Service calls this to get the victim's emergency contacts for SMS alerts.
+     * Phone numbers are already in international form (+92...), ready for the SMS gateway.
      */
     @GetMapping("/users/{userId}/emergency-contacts")
     public ResponseEntity<List<EmergencyContactResponse>> getEmergencyContacts(
@@ -49,7 +54,8 @@ public class InternalApiController {
     }
 
     /**
-     * Dispatch Service calls this to get all on-duty responders with known GPS positions.
+     * Dispatch Service calls this to get all on-duty responders with known GPS positions
+     * (shift not finished, heartbeat recent).
      */
     @GetMapping("/responders/available")
     public ResponseEntity<List<AvailableResponderResponse>> getAvailableResponders() {
@@ -65,6 +71,23 @@ public class InternalApiController {
             @PathVariable UUID userId,
             @RequestParam DutyStatus status) {
         responderService.updateStatusByUserId(userId, status);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Dispatch Service calls this to get the Firebase tokens of a user's phones (newest first).
+     */
+    @GetMapping("/users/{userId}/push-tokens")
+    public ResponseEntity<List<String>> getPushTokens(@PathVariable UUID userId) {
+        return ResponseEntity.ok(pushTokenService.tokensOf(userId));
+    }
+
+    /**
+     * Dispatch Service reports tokens that Firebase rejected, so we stop keeping them.
+     */
+    @PostMapping("/push-tokens/invalidate")
+    public ResponseEntity<Void> invalidatePushTokens(@Valid @RequestBody InvalidateTokensRequest request) {
+        pushTokenService.invalidate(request.getTokens());
         return ResponseEntity.noContent().build();
     }
 }

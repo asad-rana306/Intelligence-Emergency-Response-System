@@ -1,7 +1,6 @@
 package com.iers.dispatch.service;
 
 import com.iers.dispatch.dto.Viewer;
-import com.iers.dispatch.dto.feign.EmergencyContactDto;
 import com.iers.dispatch.dto.feign.MedicalProfileDto;
 import com.iers.dispatch.dto.kafka.CrashEventMessage;
 import com.iers.dispatch.dto.response.DispatchAckResponse;
@@ -123,11 +122,8 @@ class DispatchOrchestratorTest {
     @Test
     @DisplayName("handleCrashDetected — creates incident, announces it, offers it to the nearest responder")
     void handleCrashDetected_fullPipeline() {
-        List<EmergencyContactDto> contacts = List.of(
-                EmergencyContactDto.builder().contactName("Mom").phone("+1111").build());
         when(authServiceClient.getMedicalProfile(driverId)).thenReturn(
                 MedicalProfileDto.builder().bloodType("O+").allergies("Penicillin").build());
-        when(authServiceClient.getEmergencyContacts(driverId)).thenReturn(contacts);
         stubSaveAndFind();
         when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(responderA);
         stubClaim(1);
@@ -157,9 +153,10 @@ class DispatchOrchestratorTest {
                 .containsEntry("attempt", 1);
         assertThat(offered.get("dispatchExpiresAt")).isInstanceOf(String.class);
 
-        verify(notificationService).sendEmergencySms(eq(contacts), eq("John Doe"), any());
-        verify(notificationService).sendResponderPush(eq(responderId), eq("AMB-001"),
-                eq(incidentId), eq("John Doe"), eq(37.7749), eq(-122.4194), eq(4));
+        // Contacts are alerted in the background (not inside this transaction), the responder gets a push
+        verify(notificationService).crashDetected(incidentId);
+        verify(notificationService).offerToResponder(responderId, incidentId, "John Doe", 37.7749, -122.4194);
+        verify(authServiceClient, never()).getEmergencyContacts(any());
         verify(incidentRepository).claimOffer(eq(incidentId), eq(IncidentStatus.DISPATCHING),
                 eq(IncidentStatus.DISPATCHED), eq(responderId), eq("Responder A"), eq("+923001111111"),
                 eq("AMB-001"), any(Instant.class));
@@ -200,7 +197,6 @@ class DispatchOrchestratorTest {
                 eq(driverId), eq(IncidentService.ACTIVE))).thenReturn(Optional.empty());
         when(authServiceClient.getMedicalProfile(driverId)).thenReturn(
                 MedicalProfileDto.builder().bloodType("O+").allergies("None").build());
-        when(authServiceClient.getEmergencyContacts(driverId)).thenReturn(Collections.emptyList());
         stubSaveAndFind();
         when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(responderA);
         stubClaim(1);
@@ -212,19 +208,18 @@ class DispatchOrchestratorTest {
     }
 
     @Test
-    @DisplayName("handleCrashDetected — Auth down: medical UNKNOWN, no SMS, dispatch still happens")
+    @DisplayName("handleCrashDetected — Auth down: medical UNKNOWN, dispatch still happens, contact alert still queued")
     void handleCrashDetected_authDown_fallback() {
         when(authServiceClient.getMedicalProfile(driverId)).thenReturn(
                 MedicalProfileDto.builder().bloodType("UNKNOWN").allergies("UNKNOWN").build());
-        when(authServiceClient.getEmergencyContacts(driverId)).thenReturn(Collections.emptyList());
         stubSaveAndFind();
         when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(responderA);
         stubClaim(1);
 
         orchestrator.handleCrashDetected(crashEvent);
 
-        verify(notificationService, never()).sendEmergencySms(anyList(), anyString(), any());
-        verify(notificationService).sendResponderPush(any(), any(), any(), any(), anyDouble(), anyDouble(), anyInt());
+        verify(notificationService).crashDetected(incidentId);
+        verify(notificationService).offerToResponder(eq(responderId), eq(incidentId), any(), any(), any());
     }
 
     @Test
@@ -239,15 +234,14 @@ class DispatchOrchestratorTest {
 
         assertThat(saved.getBloodType()).isEqualTo("UNKNOWN");
         verifyNoInteractions(authServiceClient);
-        verify(notificationService).sendResponderPush(any(), any(), any(), any(), anyDouble(), anyDouble(), anyInt());
+        verify(notificationService).offerToResponder(eq(responderId), eq(incidentId), any(), any(), any());
     }
 
     @Test
-    @DisplayName("handleCrashDetected — nobody free: no push, a retry is scheduled")
+    @DisplayName("handleCrashDetected — nobody free: no push, a retry is scheduled, contacts are still alerted")
     void handleCrashDetected_noResponder() {
         when(authServiceClient.getMedicalProfile(driverId)).thenReturn(
                 MedicalProfileDto.builder().bloodType("O+").allergies("None").build());
-        when(authServiceClient.getEmergencyContacts(driverId)).thenReturn(Collections.emptyList());
         stubSaveAndFind();
         when(spatialQueryService.findNearestResponder(anyDouble(), anyDouble(), anyList())).thenReturn(null);
 
@@ -255,7 +249,10 @@ class DispatchOrchestratorTest {
 
         verify(incidentRepository).scheduleRetry(eq(incidentId), eq(IncidentStatus.DISPATCHING), any(Instant.class));
         verify(incidentRepository, never()).claimOffer(any(), any(), any(), any(), any(), any(), any(), any());
-        verifyNoInteractions(escalationTimerService, notificationService);
+        verifyNoInteractions(escalationTimerService);
+        // The contacts are alerted even though no ambulance is available, and nobody is rung
+        verify(notificationService).crashDetected(incidentId);
+        verifyNoMoreInteractions(notificationService);
         // the driver still learns the incident exists
         verify(eventPublisher).publish(eq("INCIDENT_CREATED"), any(Incident.class), isNull(), anyMap());
     }
@@ -316,6 +313,8 @@ class DispatchOrchestratorTest {
         orchestrator.dispatchToNearest(incidentId);
 
         verify(eventPublisher).publish(eq("NO_RESPONDER_AVAILABLE"), any(Incident.class), isNull(), anyMap());
+        // the contacts are told to call the emergency number themselves
+        verify(notificationService).noResponderYet(incidentId);
         verify(incidentRepository).scheduleRetry(eq(incidentId), eq(IncidentStatus.DISPATCHING), any(Instant.class));
     }
 
@@ -331,6 +330,7 @@ class DispatchOrchestratorTest {
         orchestrator.dispatchToNearest(incidentId);
 
         verify(eventPublisher, never()).publish(eq("NO_RESPONDER_AVAILABLE"), any(), any(), any());
+        verify(notificationService, never()).noResponderYet(any());
     }
 
     @Test
@@ -395,7 +395,7 @@ class DispatchOrchestratorTest {
     }
 
     @Test
-    @DisplayName("dispatchToNearest — a missing priority is sent as 0")
+    @DisplayName("dispatchToNearest — a missing priority does not stop the offer")
     void dispatch_nullPriority() {
         Incident noPriority = incident(IncidentStatus.DISPATCHING, null);
         noPriority.setPriorityScore(null);
@@ -405,7 +405,7 @@ class DispatchOrchestratorTest {
 
         orchestrator.dispatchToNearest(incidentId);
 
-        verify(notificationService).sendResponderPush(any(), any(), any(), any(), anyDouble(), anyDouble(), eq(0));
+        verify(notificationService).offerToResponder(eq(responderId), eq(incidentId), any(), any(), any());
     }
 
     @Test
@@ -445,8 +445,7 @@ class DispatchOrchestratorTest {
         InOrder order = inOrder(eventPublisher);
         order.verify(eventPublisher).publish(eq("INCIDENT_OFFER_EXPIRED"), any(Incident.class), eq(responderId), anyMap());
         order.verify(eventPublisher).publish(eq("INCIDENT_OFFERED"), any(Incident.class), eq(otherResponderId), anyMap());
-        verify(notificationService).sendResponderPush(eq(otherResponderId), eq("AMB-002"),
-                any(), any(), anyDouble(), anyDouble(), anyInt());
+        verify(notificationService).offerToResponder(eq(otherResponderId), eq(incidentId), any(), any(), any());
     }
 
     @Test
@@ -476,61 +475,43 @@ class DispatchOrchestratorTest {
     }
 
     @Test
-    @DisplayName("handleCrashCancelled — stands down the responder, tells everyone, sends false-alarm SMS")
+    @DisplayName("handleCrashCancelled — stands down the responder, tells everyone, queues the false-alarm SMS")
     void cancel_standsDown() {
         Incident inc = incident(IncidentStatus.DISPATCHED, responderId);
-        List<EmergencyContactDto> contacts = List.of(
-                EmergencyContactDto.builder().phone("+1111").contactName("Mom").build());
         when(incidentRepository.findByCrashEventId(crashId)).thenReturn(Optional.of(inc));
         when(incidentRepository.cancelIfActive(eq(incidentId), anyCollection(),
                 eq(IncidentStatus.CANCELLED_BY_USER), any(Instant.class))).thenReturn(1);
-        when(authServiceClient.getEmergencyContacts(driverId)).thenReturn(contacts);
 
         orchestrator.handleCrashCancelled(cancelEvent());
 
         verify(escalationTimerService).cancelTimer(incidentId);
-        verify(notificationService).sendStandDownPush(responderId, incidentId);
+        verify(notificationService).standDown(responderId, incidentId);
         verify(spatialQueryService).markResponderOnDuty(responderId);
         verify(authServiceClient).updateResponderStatus(responderId, "ON_DUTY");
-        verify(notificationService).sendFalseAlarmSms(contacts, "John Doe");
+        verify(notificationService).falseAlarm(incidentId);
+        verify(authServiceClient, never()).getEmergencyContacts(any());
         verify(gpsStreamingService).cleanupIncident(incidentId.toString());
         verify(eventPublisher).publish(eq("INCIDENT_STAND_DOWN"), any(Incident.class), eq(responderId), dataCaptor.capture());
         assertThat(dataCaptor.getValue()).containsEntry("reason", "DRIVER_CANCELLED");
     }
 
     @Test
-    @DisplayName("handleCrashCancelled — nobody holds the incident yet: no stand-down, SMS still sent")
+    @DisplayName("handleCrashCancelled — nobody holds the incident yet: no stand-down, false-alarm SMS still queued")
     void cancel_noResponderYet() {
         Incident inc = incident(IncidentStatus.DISPATCHING, null);
-        List<EmergencyContactDto> contacts = List.of(
-                EmergencyContactDto.builder().phone("+1111").contactName("Mom").build());
         when(incidentRepository.findByCrashEventId(crashId)).thenReturn(Optional.of(inc));
         when(incidentRepository.cancelIfActive(any(), anyCollection(), any(), any())).thenReturn(1);
-        when(authServiceClient.getEmergencyContacts(driverId)).thenReturn(contacts);
 
         orchestrator.handleCrashCancelled(cancelEvent());
 
-        verify(notificationService, never()).sendStandDownPush(any(), any());
+        verify(notificationService, never()).standDown(any(), any());
         verifyNoInteractions(eventPublisher, spatialQueryService);
-        verify(notificationService).sendFalseAlarmSms(contacts, "John Doe");
+        verify(notificationService).falseAlarm(incidentId);
     }
 
     @Test
-    @DisplayName("handleCrashCancelled — no contacts (Auth down): no SMS")
-    void cancel_noContacts() {
-        Incident inc = incident(IncidentStatus.DISPATCHING, null);
-        when(incidentRepository.findByCrashEventId(crashId)).thenReturn(Optional.of(inc));
-        when(incidentRepository.cancelIfActive(any(), anyCollection(), any(), any())).thenReturn(1);
-        when(authServiceClient.getEmergencyContacts(driverId)).thenReturn(Collections.emptyList());
-
-        orchestrator.handleCrashCancelled(cancelEvent());
-
-        verify(notificationService, never()).sendFalseAlarmSms(any(), any());
-    }
-
-    @Test
-    @DisplayName("handleCrashCancelled — an incident without a driver id needs no contact lookup")
-    void cancel_noDriver() {
+    @DisplayName("handleCrashCancelled — Auth is never called for contacts (the alert service knows who was told)")
+    void cancel_noContactLookup() {
         Incident inc = incident(IncidentStatus.DISPATCHING, null);
         inc.setDriverId(null);
         when(incidentRepository.findByCrashEventId(crashId)).thenReturn(Optional.of(inc));
@@ -539,6 +520,7 @@ class DispatchOrchestratorTest {
         orchestrator.handleCrashCancelled(cancelEvent());
 
         verifyNoInteractions(authServiceClient);
+        verify(notificationService).falseAlarm(incidentId);
     }
 
     @Test
@@ -580,6 +562,7 @@ class DispatchOrchestratorTest {
         verify(escalationTimerService).cancelTimer(incidentId);
         verify(spatialQueryService).markResponderOnMission(responderId);
         verify(authServiceClient).updateResponderStatus(responderId, "ON_MISSION");
+        verify(notificationService).responderOnTheWay(incidentId, driverId, "Responder A");
 
         verify(eventPublisher).publish(eq("INCIDENT_ACCEPTED"), any(Incident.class), eq(responderId), dataCaptor.capture());
         @SuppressWarnings("unchecked")
@@ -680,8 +663,7 @@ class DispatchOrchestratorTest {
         assertThat(attemptA.getResponse()).isEqualTo(DispatchResponseType.REJECTED);
         verify(escalationTimerService).cancelTimer(incidentId);
         verify(eventPublisher).publish(eq("INCIDENT_OFFER_EXPIRED"), any(Incident.class), eq(responderId), anyMap());
-        verify(notificationService).sendResponderPush(eq(otherResponderId), eq("AMB-002"),
-                any(), any(), anyDouble(), anyDouble(), anyInt());
+        verify(notificationService).offerToResponder(eq(otherResponderId), eq(incidentId), any(), any(), any());
     }
 
     @Test

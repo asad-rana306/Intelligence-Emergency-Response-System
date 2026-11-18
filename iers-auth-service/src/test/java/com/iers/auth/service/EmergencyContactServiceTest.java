@@ -9,12 +9,15 @@ import com.iers.auth.exception.ResourceNotFoundException;
 import com.iers.auth.exception.UnauthorizedException;
 import com.iers.auth.repository.EmergencyContactRepository;
 import com.iers.auth.repository.UserRepository;
+import com.iers.auth.util.PhoneNormalizer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
@@ -30,6 +33,7 @@ class EmergencyContactServiceTest {
 
     @Mock private EmergencyContactRepository contactRepository;
     @Mock private UserRepository userRepository;
+    @Spy private PhoneNormalizer phoneNormalizer = new PhoneNormalizer("92");
 
     @InjectMocks private EmergencyContactService service;
 
@@ -61,6 +65,35 @@ class EmergencyContactServiceTest {
 
         assertThat(response.getContactName()).isEqualTo("Mom");
         assertThat(response.getRelationship()).isEqualTo("Mother");
+    }
+
+    @Test
+    @DisplayName("addContact — phone is saved in international form (the accident SMS goes to it)")
+    void addContact_normalizesPhone() {
+        EmergencyContactRequest request = EmergencyContactRequest.builder()
+                .contactName("Mom").phone("0300-1234567").relationship("Mother").build();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
+        when(contactRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.addContact(userId, request);
+
+        ArgumentCaptor<EmergencyContact> saved = ArgumentCaptor.forClass(EmergencyContact.class);
+        verify(contactRepository).save(saved.capture());
+        assertThat(saved.getValue().getPhone()).isEqualTo("+923001234567");
+    }
+
+    @Test
+    @DisplayName("addContact — a wrong number is refused and nothing is saved")
+    void addContact_invalidPhone() {
+        EmergencyContactRequest request = EmergencyContactRequest.builder()
+                .contactName("Mom").phone("12ab").build();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(testUser));
+
+        assertThatThrownBy(() -> service.addContact(userId, request))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(contactRepository, never()).save(any());
     }
 
     @Test

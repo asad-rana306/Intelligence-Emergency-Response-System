@@ -1,121 +1,95 @@
 package com.iers.dispatch.service;
 
-import com.iers.dispatch.dto.feign.EmergencyContactDto;
-import com.twilio.Twilio;
-import com.twilio.rest.api.v2010.account.Message;
-import com.twilio.type.PhoneNumber;
-import jakarta.annotation.PostConstruct;
+import com.iers.dispatch.config.PushProperties;
+import com.iers.dispatch.push.PushMessage;
+import com.iers.dispatch.push.PushService;
+import com.iers.dispatch.service.ContactAlertService.FollowUp;
+import com.iers.dispatch.util.AfterCommit;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
 import java.util.UUID;
 
+/**
+ * The one place the rest of Dispatch calls to tell people something.
+ *
+ * Every method:
+ *  - returns at once (the real work runs on BackgroundRunner),
+ *  - waits for the database commit if a transaction is open (nobody hears about something that
+ *    was rolled back, and the background worker finds the saved row),
+ *  - never throws.
+ *
+ * Who is told what:
+ *   emergency contacts : SMS   (crash alert, on the way, nobody accepted yet, false alarm)
+ *   responder phone    : push  (OFFER, STAND_DOWN, OFF_DUTY)
+ *   driver phone       : push  (ACCEPTED)
+ */
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class NotificationService {
 
-    @Value("${dispatch.twilio.account-sid:}")
-    private String accountSid;
+    private final BackgroundRunner runner;
+    private final ContactAlertService contactAlerts;
+    private final PushService pushService;
+    private final PushProperties pushProps;
 
-    @Value("${dispatch.twilio.auth-token:}")
-    private String authToken;
+    /**
+     * A new incident exists: alert the emergency contacts. If the queue is full or anything fails,
+     * the sweep picks the alert up again (DispatchSweepService.sweepContactAlerts).
+     */
+    public void crashDetected(UUID incidentId) {
+        later("contact alert " + incidentId, () -> contactAlerts.sendCrashAlert(incidentId));
+    }
 
-    @Value("${dispatch.twilio.from-number:}")
-    private String fromNumber;
-
-    @Value("${dispatch.twilio.enabled:false}")
-    private boolean twilioEnabled;
-
-    @Value("${dispatch.tracking-base-url:http://localhost:3000/track}")
-    private String trackingBaseUrl;
-
-    @PostConstruct
-    public void init() {
-        if (twilioEnabled && !accountSid.isBlank() && !authToken.isBlank()) {
-            Twilio.init(accountSid, authToken);
-            log.info("Twilio initialized with account SID: {}...", accountSid.substring(0, 8));
-        } else {
-            log.info("Twilio SMS DISABLED — notifications will be logged only");
+    /** A responder accepted: tell the driver (push) and the contacts (SMS). */
+    public void responderOnTheWay(UUID incidentId, UUID driverId, String responderName) {
+        later("on-the-way SMS " + incidentId, () -> contactAlerts.sendFollowUp(incidentId, FollowUp.ON_THE_WAY));
+        if (driverId != null) {
+            later("accepted push " + incidentId,
+                    () -> pushService.sendToUser(driverId, PushMessage.accepted(incidentId, responderName)));
         }
     }
 
-    /**
-     * Send SMS alerts to all emergency contacts with a tracking link.
-     */
-    public void sendEmergencySms(List<EmergencyContactDto> contacts,
-                                 String driverName, UUID incidentId) {
-        String trackingUrl = trackingBaseUrl + "/" + incidentId;
-        String body = String.format(
-                "EMERGENCY: %s has been in a car accident. " +
-                "Live tracking: %s — Emergency services have been dispatched.",
-                driverName, trackingUrl);
-
-        for (EmergencyContactDto contact : contacts) {
-            sendSms(contact.getPhone(), body);
-        }
+    /** Nobody accepted for 2 minutes: tell the contacts to call the emergency number themselves. */
+    public void noResponderYet(UUID incidentId) {
+        later("no-responder SMS " + incidentId, () -> contactAlerts.sendFollowUp(incidentId, FollowUp.NO_RESPONDER));
     }
 
-    /**
-     * Send 'False Alarm' update to all emergency contacts.
-     */
-    public void sendFalseAlarmSms(List<EmergencyContactDto> contacts, String driverName) {
-        String body = String.format(
-                "UPDATE: The emergency alert for %s was a false alarm. " +
-                "%s is safe. Please disregard the previous message.",
-                driverName, driverName);
-
-        for (EmergencyContactDto contact : contacts) {
-            sendSms(contact.getPhone(), body);
-        }
+    /** The driver cancelled: tell the contacts who got the first SMS. */
+    public void falseAlarm(UUID incidentId) {
+        later("false-alarm SMS " + incidentId, () -> contactAlerts.sendFollowUp(incidentId, FollowUp.FALSE_ALARM));
     }
 
-    /**
-     * Simulate a high-priority push notification to a responder's device.
-     * In production, this would use Firebase Cloud Messaging (FCM).
-     */
-    public void sendResponderPush(UUID responderId, String vehicleId,
-                                  UUID incidentId, String driverName,
-                                  Double lat, Double lng, int priority) {
-        log.info("🚨 PUSH NOTIFICATION → Responder {} (vehicle={}): " +
-                 "EMERGENCY DISPATCH — {} at [{},{}], priority={}, incident={}",
-                responderId, vehicleId, driverName, lat, lng, priority, incidentId);
+    /** Ring the responder's phone (high priority push, works when the app is closed). */
+    public void offerToResponder(UUID responderId, UUID incidentId, String driverName, Double lat, Double lng) {
+        later("offer push " + incidentId, () -> pushService.sendToUser(responderId,
+                PushMessage.offer(incidentId, lat, lng, driverName, pushProps.offerTtl())));
     }
 
-    /**
-     * Send a stand-down push to a responder (late cancel or reassignment).
-     */
-    public void sendStandDownPush(UUID responderId, UUID incidentId) {
-        log.info("🔕 STAND DOWN → Responder {}: Incident {} has been cancelled", responderId, incidentId);
+    /** The offer is cancelled (late cancel). */
+    public void standDown(UUID responderId, UUID incidentId) {
+        later("stand-down push " + incidentId,
+                () -> pushService.sendToUser(responderId, PushMessage.standDown(incidentId)));
+    }
+
+    /** "You are now OFF duty" (shift over or phone silent). Reason: MAX_DURATION or HEARTBEAT_LOST. */
+    public void dutyExpired(UUID userId, String reason) {
+        later("off-duty push " + userId, () -> pushService.sendToUser(userId, PushMessage.offDuty(reason)));
     }
 
     /**
      * Forward medical profile and ETA to the hospital dashboard.
+     * Not built yet: there is no hospital system to call. It only writes the log.
      */
     public void sendHospitalPreAlert(String hospitalId, UUID incidentId,
                                      String bloodType, String allergies, String eta) {
-        log.info("🏥 HOSPITAL PRE-ALERT → Hospital {}: Incoming patient for incident={}, " +
-                 "bloodType={}, allergies={}, ETA={}",
+        log.info("HOSPITAL PRE-ALERT (log only) hospital={} incident={} bloodType={} allergies={} ETA={}",
                 hospitalId, incidentId, bloodType, allergies, eta);
     }
 
-    // ── Internal ──
-
-    private void sendSms(String to, String body) {
-        if (twilioEnabled && !fromNumber.isBlank()) {
-            try {
-                Message message = Message.creator(
-                        new PhoneNumber(to),
-                        new PhoneNumber(fromNumber),
-                        body
-                ).create();
-                log.info("SMS sent to {}: sid={}", to, message.getSid());
-            } catch (Exception e) {
-                log.error("Twilio SMS failed to {}: {}", to, e.getMessage());
-            }
-        } else {
-            log.info("📱 SMS (simulated) → {}: {}", to, body);
-        }
+    private void later(String what, Runnable task) {
+        AfterCommit.run(() -> runner.run(what, task));
     }
 }

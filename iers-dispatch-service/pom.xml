@@ -84,11 +84,11 @@
             <artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
         </dependency>
 
-        <!-- ====== TWILIO SMS ====== -->
+        <!-- ====== FIREBASE CLOUD MESSAGING (push to the phones) ====== -->
         <dependency>
-            <groupId>com.twilio.sdk</groupId>
-            <artifactId>twilio</artifactId>
-            <version>10.1.0</version>
+            <groupId>com.google.firebase</groupId>
+            <artifactId>firebase-admin</artifactId>
+            <version>9.3.0</version>
         </dependency>
 
         <!-- ====== OBSERVABILITY ====== -->

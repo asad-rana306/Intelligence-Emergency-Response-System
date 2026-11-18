@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -58,17 +59,35 @@ public class SpatialQueryService {
      * Sync responder locations from Auth Service every 15 seconds.
      * This keeps the local PostGIS-indexed table current for spatial queries.
      *
-     * PHASE 3: the key is the responder's USER id (dto.userId), the same id the phone sends
-     * in X-User-Id. Anyone who is ON_DUTY here but missing from Auth's list is marked OFF_DUTY,
-     * so a responder who went off duty (or an old row from before this change) is never offered
-     * an incident. An empty list is ignored, because Auth being down also looks like an empty list.
+     * The key is the responder's USER id (dto.userId), the same id the phone sends in X-User-Id.
+     *
+     * Auth's list holds only responders that are really available (on duty, shift not over,
+     * phone reported recently). So when Auth ANSWERS, everybody who is ON_DUTY here but not in
+     * the list is set OFF_DUTY. That includes an EMPTY list: the last responder going off duty
+     * (shift over) must disappear too.
+     *
+     * If Auth does NOT answer (down, slow, circuit open) the fallback throws
+     * AuthUnavailableException and nothing is changed. A real outage must not empty the pool.
+     *
+     * Not @Transactional on purpose: the call to Auth can take seconds, and a database
+     * connection must not wait for it. The writes below are one short transaction (saveAll).
      */
     @Scheduled(fixedRate = 15000)
-    @Transactional
     public void syncResponderLocations() {
+        List<AvailableResponderDto> responders;
         try {
-            List<AvailableResponderDto> responders = authServiceClient.getAvailableResponders();
+            responders = authServiceClient.getAvailableResponders();
+        } catch (Exception e) {
+            log.warn("Responder sync skipped, Auth did not answer: {}", e.getMessage());
+            return;
+        }
+        if (responders == null) {
+            return;
+        }
+
+        try {
             Set<UUID> seen = new HashSet<>();
+            List<ResponderLocation> changed = new ArrayList<>();
 
             for (AvailableResponderDto dto : responders) {
                 if (dto.getUserId() == null) {
@@ -87,19 +106,19 @@ public class SpatialQueryService {
                 loc.setLatitude(dto.getLatitude());
                 loc.setLongitude(dto.getLongitude());
                 loc.setLastUpdated(Instant.now());
-
-                locationRepository.save(loc);
+                changed.add(loc);
             }
 
-            if (!seen.isEmpty()) {
-                for (ResponderLocation loc : locationRepository.findAll()) {
-                    if (ON_DUTY.equals(loc.getDutyStatus()) && !seen.contains(loc.getResponderId())) {
-                        loc.setDutyStatus(OFF_DUTY);
-                        locationRepository.save(loc);
-                    }
+            for (ResponderLocation loc : locationRepository.findByDutyStatus(ON_DUTY)) {
+                if (!seen.contains(loc.getResponderId())) {
+                    loc.setDutyStatus(OFF_DUTY);
+                    changed.add(loc);
                 }
             }
 
+            if (!changed.isEmpty()) {
+                locationRepository.saveAll(changed);
+            }
             log.debug("Synced {} responder locations from Auth Service", responders.size());
         } catch (Exception e) {
             log.warn("Failed to sync responder locations: {}", e.getMessage());
@@ -130,6 +149,21 @@ public class SpatialQueryService {
         locationRepository.findByResponderId(responderId).ifPresent(loc -> {
             loc.setDutyStatus(ON_DUTY);
             locationRepository.save(loc);
+        });
+    }
+
+    /**
+     * Auth says this responder is OFF duty (shift over, phone silent, or they switched off).
+     * Remove them from the pool at once instead of waiting for the next sync.
+     * A responder who is ON_MISSION is left alone: they are busy, and Dispatch owns that state.
+     */
+    @Transactional
+    public void markResponderOffDuty(UUID responderId) {
+        locationRepository.findByResponderId(responderId).ifPresent(loc -> {
+            if (ON_DUTY.equals(loc.getDutyStatus())) {
+                loc.setDutyStatus(OFF_DUTY);
+                locationRepository.save(loc);
+            }
         });
     }
 }

@@ -3,11 +3,18 @@
 # ═══════════════════════════════════════════════════════════════
 #  ENVIRONMENT VARIABLES:
 #    DB_HOST / DB_PORT / DB_NAME / DB_USERNAME / DB_PASSWORD
+#    DDL_AUTO                 — update (default) | validate | create-drop (tests only)
 #    REDIS_HOST / REDIS_PORT / REDIS_PASSWORD
 #    KAFKA_BOOTSTRAP
-#    TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER
-#    SIMGATE_API_KEY / SIMGATE_DEVICE_ID
 #    EUREKA_URL
+#    SMS_PROVIDER             — log (default, only prints) | simgate (real SMS)
+#    SIMGATE_API_KEY / SIMGATE_DEVICE_ID   — needed when SMS_PROVIDER=simgate
+#    GOOGLE_APPLICATION_CREDENTIALS        — path of the Firebase service-account JSON
+#    FIREBASE_PROJECT_ID                   — e.g. iers-a6400
+#    FCM_ENABLED              — true (default) | false
+#    TRACKING_BASE_URL        — page contacts open to follow the ambulance
+#    EMERGENCY_NUMBER         — national number printed in SMS (default 1122)
+#    DUTY_LISTENER_ENABLED    — true (default) | false = do not read Auth duty-events
 # ═══════════════════════════════════════════════════════════════
 
 server:
@@ -25,7 +32,9 @@ spring:
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
-      ddl-auto: create
+      # "update" keeps the data when the service restarts (the sweep needs it to resume
+      # offers and contact alerts). The old value "create" erased every incident on restart.
+      ddl-auto: ${DDL_AUTO:update}
     show-sql: false
     properties:
       hibernate:
@@ -38,7 +47,7 @@ spring:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
 
-  # ── Kafka Consumer ──
+  # ── Kafka ──
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
     consumer:
@@ -47,27 +56,55 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
 
-# ── Dispatch Config ──
+  # ── Feign (calls to Auth) ──
+  cloud:
+    openfeign:
+      circuitbreaker:
+        enabled: true
+      client:
+        config:
+          default:
+            connect-timeout: 2000     # ms — Auth is on the same network, it answers fast or not at all
+            read-timeout: 4000        # ms — must stay below the circuit-breaker time limit below
+
+# ── Dispatch ──
 dispatch:
   kafka:
-    topic: crash-events
+    topic: crash-events               # crashes from the IoT service
     group-id: dispatch-group
-  twilio:
-    account-sid: ${TWILIO_ACCOUNT_SID:<YOUR_TWILIO_SID>}
-    auth-token: ${TWILIO_AUTH_TOKEN:<YOUR_TWILIO_AUTH_TOKEN>}
-    from-number: ${TWILIO_FROM_NUMBER:<YOUR_TWILIO_PHONE>}
-    enabled: ${TWILIO_ENABLED:false}
-  tracking-base-url: ${TRACKING_BASE_URL:http://localhost:3000/track}
+    incident-topic: incident-events   # what Dispatch announces
+    duty-topic: duty-events           # what Auth announces (shift over / phone silent)
+    duty-listener-enabled: ${DUTY_LISTENER_ENABLED:true}   # false = do not read duty-events
 
-# ── SimGate SMS Gateway ──
-simgate:
-  base-url: https://api.simgate.app
-  api-key: ${SIMGATE_API_KEY}
-  device-id: ${SIMGATE_DEVICE_ID}
+  # ── Contact alerts (SMS to emergency contacts) ──
+  notify:
+    tracking-base-url: ${TRACKING_BASE_URL:http://localhost:3000/track}
+    emergency-number: ${EMERGENCY_NUMBER:1122}
+    contact-retry-interval: 20s       # wait before the next try when an SMS failed
+    contact-lease: 2m                 # one worker owns an alert this long (many instances)
+    give-up-after: 30m                # stop retrying an alert for an incident this old
+    batch-size: 20                    # alerts picked up per sweep
+    executor:
+      threads: 4                      # background workers for SMS and push
+      queue-capacity: 500
 
-services:
-  auth:
-    url: http://auth-service:8081
+  # ── SMS provider ──
+  sms:
+    provider: ${SMS_PROVIDER:log}     # log | simgate
+    simgate:
+      base-url: https://api.simgate.app
+      api-key: ${SIMGATE_API_KEY:}
+      device-id: ${SIMGATE_DEVICE_ID:}
+      connect-timeout: 3s
+      read-timeout: 10s
+      max-attempts: 2
+
+  # ── Push (Firebase Cloud Messaging) ──
+  fcm:
+    enabled: ${FCM_ENABLED:true}
+    credentials-path: ${GOOGLE_APPLICATION_CREDENTIALS:}
+    project-id: ${FIREBASE_PROJECT_ID:}
+    offer-ttl: 30s                    # an ambulance offer is useless after the offer time
 
 # ── Eureka ──
 eureka:
@@ -81,20 +118,21 @@ eureka:
     instance-id: ${spring.application.name}:${random.uuid}
 
 # ── Resilience4j (Feign circuit breakers) ──
+# "default" applies to every Feign method. (Per-method names are generated, so a named
+# instance would never match.)
 resilience4j:
   circuitbreaker:
-    instances:
-      authServiceClient:
+    configs:
+      default:
         sliding-window-size: 10
+        minimum-number-of-calls: 5
         failure-rate-threshold: 50
         wait-duration-in-open-state: 30s
         permitted-number-of-calls-in-half-open-state: 3
   timelimiter:
-    instances:
-      authServiceClient:
-        timeout-duration: 5s
-
-spring.cloud.openfeign.circuitbreaker.enabled: true
+    configs:
+      default:
+        timeout-duration: 6s
 
 # ── Actuator ──
 management:

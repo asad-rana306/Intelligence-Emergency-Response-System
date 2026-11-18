@@ -7,10 +7,12 @@ import com.iers.auth.dto.response.AuthResponse;
 import com.iers.auth.entity.User;
 import com.iers.auth.entity.enums.Role;
 import com.iers.auth.exception.DuplicateResourceException;
+import com.iers.auth.exception.PhoneNotVerifiedException;
 import com.iers.auth.exception.UnauthorizedException;
 import com.iers.auth.repository.ResponderProfileRepository;
 import com.iers.auth.repository.UserRepository;
 import com.iers.auth.security.JwtProvider;
+import com.iers.auth.util.PhoneNormalizer;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.impl.DefaultClaims;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,7 +20,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -42,6 +46,9 @@ class AuthServiceTest {
     @Mock private BCryptPasswordEncoder passwordEncoder;
     @Mock private StringRedisTemplate redisTemplate;
     @Mock private ValueOperations<String, String> valueOperations;
+    @Mock private OtpService otpService;
+    @Mock private PushTokenService pushTokenService;
+    @Spy private PhoneNormalizer phoneNormalizer = new PhoneNormalizer("92");
 
     @InjectMocks private AuthService authService;
 
@@ -85,6 +92,7 @@ class AuthServiceTest {
         assertThat(response.getAccessToken()).isEqualTo("access.token.here");
         assertThat(response.getRefreshToken()).isEqualTo("refresh.token.here");
         assertThat(response.getRole()).isEqualTo(Role.DRIVER);
+        verify(otpService).requireVerifiedPhone("+1234567890");
         verify(responderProfileRepository, never()).save(any()); // No responder profile for DRIVER
     }
 
@@ -124,6 +132,76 @@ class AuthServiceTest {
         assertThatThrownBy(() -> authService.register(request))
                 .isInstanceOf(DuplicateResourceException.class)
                 .hasMessageContaining("already registered");
+        verifyNoInteractions(otpService); // the verified phone must not be used up by a failed request
+    }
+
+    @Test
+    @DisplayName("register — email is compared in lower case (no duplicate by capital letters)")
+    void register_emailCaseInsensitive() {
+        RegisterRequest request = RegisterRequest.builder()
+                .email(" Driver@Test.com ").password("password123")
+                .fullName("X").phone("+1234567890").role(Role.DRIVER).build();
+
+        when(userRepository.existsByEmail("driver@test.com")).thenReturn(true);
+
+        assertThatThrownBy(() -> authService.register(request))
+                .isInstanceOf(DuplicateResourceException.class);
+    }
+
+    @Test
+    @DisplayName("register — phone is saved in international form and that form is checked by OTP")
+    void register_normalizesPhone() {
+        RegisterRequest request = RegisterRequest.builder()
+                .email("new@test.com").password("password123")
+                .fullName("New User").phone("0300 1234567").role(Role.DRIVER).build();
+
+        when(userRepository.existsByEmail("new@test.com")).thenReturn(false);
+        when(passwordEncoder.encode(any())).thenReturn("$2a$12$encoded");
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> {
+            User u = inv.getArgument(0);
+            u.setId(UUID.randomUUID());
+            return u;
+        });
+        when(jwtProvider.generateAccessToken(any())).thenReturn("at");
+        when(jwtProvider.generateRefreshToken(any())).thenReturn("rt");
+        when(jwtProvider.getAccessTokenExpiry()).thenReturn(Duration.ofMinutes(15));
+
+        authService.register(request);
+
+        verify(otpService).requireVerifiedPhone("+923001234567");
+        ArgumentCaptor<User> saved = ArgumentCaptor.forClass(User.class);
+        verify(userRepository, atLeastOnce()).save(saved.capture());
+        assertThat(saved.getAllValues().get(0).getPhone()).isEqualTo("+923001234567");
+    }
+
+    @Test
+    @DisplayName("register — phone not verified: nothing is saved")
+    void register_phoneNotVerified() {
+        RegisterRequest request = RegisterRequest.builder()
+                .email("new@test.com").password("password123")
+                .fullName("New User").phone("+1234567890").role(Role.DRIVER).build();
+
+        when(userRepository.existsByEmail("new@test.com")).thenReturn(false);
+        doThrow(new PhoneNotVerifiedException("not verified"))
+                .when(otpService).requireVerifiedPhone("+1234567890");
+
+        assertThatThrownBy(() -> authService.register(request))
+                .isInstanceOf(PhoneNotVerifiedException.class);
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("register — invalid phone number is refused before the code is used")
+    void register_invalidPhone() {
+        RegisterRequest request = RegisterRequest.builder()
+                .email("new@test.com").password("password123")
+                .fullName("New User").phone("abc").role(Role.DRIVER).build();
+
+        when(userRepository.existsByEmail("new@test.com")).thenReturn(false);
+
+        assertThatThrownBy(() -> authService.register(request))
+                .isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(otpService);
     }
 
     // ══════════════════ LOGIN ══════════════════
@@ -190,6 +268,25 @@ class AuthServiceTest {
         authService.login(request);
 
         assertThat(testUser.getDeviceId()).isEqualTo("fcm-token-abc");
+        verify(pushTokenService).register(userId, "fcm-token-abc", null);
+    }
+
+    @Test
+    @DisplayName("login — no deviceId: no push token is stored")
+    void login_withoutDeviceId_noPushToken() {
+        LoginRequest request = LoginRequest.builder()
+                .email("driver@test.com").password("correct").build();
+
+        when(userRepository.findByEmail("driver@test.com")).thenReturn(Optional.of(testUser));
+        when(passwordEncoder.matches("correct", testUser.getPasswordHash())).thenReturn(true);
+        when(jwtProvider.generateAccessToken(any())).thenReturn("at");
+        when(jwtProvider.generateRefreshToken(any())).thenReturn("rt");
+        when(jwtProvider.getAccessTokenExpiry()).thenReturn(Duration.ofMinutes(15));
+        when(userRepository.save(any())).thenReturn(testUser);
+
+        authService.login(request);
+
+        verifyNoInteractions(pushTokenService);
     }
 
     // ══════════════════ REFRESH ══════════════════

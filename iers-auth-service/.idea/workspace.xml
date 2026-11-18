@@ -1,0 +1,381 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="eee6ae27-336f-4aad-9543-cabc1f2830da" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/.idea/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/.idea/CoolRequestSetting.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/.idea/compiler.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/.idea/encodings.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/.idea/jarRepositories.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/.idea/misc.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/.idea/vcs.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/API_DOCS.md" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-api-gateway/API_DOCS.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/src/main/resources/application.yml" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-api-gateway/src/main/resources/application.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/target/classes/application.yml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/target/classes/com/iers/gateway/ApiGatewayApplication.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/target/classes/com/iers/gateway/config/CorsConfig.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/target/classes/com/iers/gateway/config/RateLimiterConfig.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/target/classes/com/iers/gateway/config/RedisConfig.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/target/classes/com/iers/gateway/controller/FallbackController.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/target/classes/com/iers/gateway/dto/ErrorResponse$ErrorResponseBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/target/classes/com/iers/gateway/dto/ErrorResponse.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/target/classes/com/iers/gateway/exception/GatewayExceptionHandler.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/target/classes/com/iers/gateway/filter/JwtAuthenticationFilter.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/target/classes/com/iers/gateway/filter/RequestLoggingFilter.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-api-gateway/target/classes/com/iers/gateway/security/JwtUtil.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/CoolRequestSetting.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/compiler.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/encodings.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/jarRepositories.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/API_DOCS.md" beforeDir="false" afterPath="$PROJECT_DIR$/API_DOCS.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/pom.xml" beforeDir="false" afterPath="$PROJECT_DIR$/pom.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/controller/InternalApiController.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/iers/auth/controller/InternalApiController.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/controller/ResponderController.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/iers/auth/controller/ResponderController.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/dto/response/ResponderProfileResponse.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/iers/auth/dto/response/ResponderProfileResponse.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/duty/DutyController.java" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/duty/DutyScheduler.java" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/duty/README-auth-service-changes.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/entity/ResponderProfile.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/iers/auth/entity/ResponderProfile.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/exception/GlobalExceptionHandler.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/iers/auth/exception/GlobalExceptionHandler.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/otp/OtpController.java" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/otp/OtpService.java" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/otp/SimGateClient.java" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/push/PushTokenController.java" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/push/PushTokenEntity.java" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/push/PushTokenRepository.java" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/push/README-auth-changes.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/repository/ResponderProfileRepository.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/iers/auth/repository/ResponderProfileRepository.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/service/AuthService.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/iers/auth/service/AuthService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/service/EmergencyContactService.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/iers/auth/service/EmergencyContactService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/iers/auth/service/ResponderService.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/iers/auth/service/ResponderService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/resources/application.yml" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/resources/application.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/test/java/com/iers/auth/controller/InternalApiControllerTest.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/test/java/com/iers/auth/controller/InternalApiControllerTest.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/test/java/com/iers/auth/service/AuthServiceTest.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/test/java/com/iers/auth/service/AuthServiceTest.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/test/java/com/iers/auth/service/EmergencyContactServiceTest.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/test/java/com/iers/auth/service/EmergencyContactServiceTest.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/test/java/com/iers/auth/service/ResponderServiceTest.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/test/java/com/iers/auth/service/ResponderServiceTest.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/application.yml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/AuthServiceApplication.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/config/RedisConfig.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/controller/AuthController.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/controller/EmergencyContactController.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/controller/InternalApiController.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/controller/MedicalProfileController.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/controller/ResponderController.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/controller/UserController.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/ErrorResponse$ErrorResponseBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/ErrorResponse.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/EmergencyContactRequest$EmergencyContactRequestBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/EmergencyContactRequest.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/LoginRequest$LoginRequestBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/LoginRequest.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/MedicalProfileRequest$MedicalProfileRequestBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/MedicalProfileRequest.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/RefreshTokenRequest$RefreshTokenRequestBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/RefreshTokenRequest.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/RegisterRequest$RegisterRequestBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/RegisterRequest.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/UpdateDutyStatusRequest$UpdateDutyStatusRequestBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/UpdateDutyStatusRequest.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/UpdateLocationRequest$UpdateLocationRequestBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/UpdateLocationRequest.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/UpdateUserRequest$UpdateUserRequestBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/request/UpdateUserRequest.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/response/AuthResponse$AuthResponseBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/response/AuthResponse.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/response/AvailableResponderResponse$AvailableResponderResponseBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/response/AvailableResponderResponse.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/response/EmergencyContactResponse$EmergencyContactResponseBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/response/EmergencyContactResponse.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/response/MedicalProfileResponse$MedicalProfileResponseBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/response/MedicalProfileResponse.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/response/ResponderProfileResponse$ResponderProfileResponseBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/response/ResponderProfileResponse.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/response/UserResponse$UserResponseBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/dto/response/UserResponse.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/entity/EmergencyContact$EmergencyContactBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/entity/EmergencyContact.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/entity/MedicalProfile$MedicalProfileBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/entity/MedicalProfile.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/entity/ResponderProfile$ResponderProfileBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/entity/ResponderProfile.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/entity/User$UserBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/entity/User.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/entity/enums/DutyStatus.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/entity/enums/Role.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/exception/DuplicateResourceException.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/exception/GlobalExceptionHandler.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/exception/ResourceNotFoundException.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/exception/UnauthorizedException.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/repository/EmergencyContactRepository.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/repository/MedicalProfileRepository.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/repository/ResponderProfileRepository.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/repository/UserRepository.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/security/JwtProvider.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/service/AuthService.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/service/EmergencyContactService.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/service/MedicalProfileService.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/service/ResponderService.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/classes/com/iers/auth/service/UserService.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/maven-status/maven-compiler-plugin/compile/default-compile/inputFiles.lst" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/createdFiles.lst" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/maven-status/maven-compiler-plugin/testCompile/default-testCompile/inputFiles.lst" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/target/test-classes/application-test.yml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/.idea/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/.idea/CoolRequestSetting.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/.idea/compiler.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/.idea/encodings.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/.idea/jarRepositories.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/.idea/misc.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/.idea/vcs.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/API_DOCS.md" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/API_DOCS.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/pom.xml" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/pom.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/entity/Incident.java" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/entity/Incident.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/feign/AuthServiceClient.java" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/feign/AuthServiceClient.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/feign/AuthServiceFallbackFactory.java" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/feign/AuthServiceFallbackFactory.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/push/AuthPushClient.java" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/push/FirebasePushConfig.java" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/push/IncidentPushListener.java" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/push/PushService.java" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/push/PushService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/push/README-dispatch-changes.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/repository/IncidentRepository.java" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/repository/IncidentRepository.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/repository/ResponderLocationRepository.java" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/repository/ResponderLocationRepository.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/service/DispatchOrchestrator.java" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/service/DispatchOrchestrator.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/service/DispatchSweepService.java" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/service/DispatchSweepService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/service/NotificationService.java" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/service/NotificationService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/service/SpatialQueryService.java" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/main/java/com/iers/dispatch/service/SpatialQueryService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/main/resources/application.yml" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/main/resources/application.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/test/java/com/iers/dispatch/service/DispatchOrchestratorTest.java" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/test/java/com/iers/dispatch/service/DispatchOrchestratorTest.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/test/java/com/iers/dispatch/service/DispatchSweepServiceTest.java" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/test/java/com/iers/dispatch/service/DispatchSweepServiceTest.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/test/java/com/iers/dispatch/service/SpatialQueryServiceTest.java" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/test/java/com/iers/dispatch/service/SpatialQueryServiceTest.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/src/test/resources/application-test.yml" beforeDir="false" afterPath="$PROJECT_DIR$/../iers-dispatch-service/src/test/resources/application-test.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/application.yml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/DispatchNotificationApplication.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/config/FeignConfig.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/config/RedisConfig.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/controller/ChatController.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/controller/DispatchController.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/controller/IncidentController.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/ErrorResponse$ErrorResponseBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/ErrorResponse.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/Viewer.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/feign/AvailableResponderDto$AvailableResponderDtoBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/feign/AvailableResponderDto.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/feign/EmergencyContactDto$EmergencyContactDtoBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/feign/EmergencyContactDto.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/feign/MedicalProfileDto$MedicalProfileDtoBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/feign/MedicalProfileDto.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/kafka/CrashEventMessage$CrashEventMessageBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/kafka/CrashEventMessage.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/kafka/IncidentEventMessage$IncidentEventMessageBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/kafka/IncidentEventMessage.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/request/GpsUpdateMessage$GpsUpdateMessageBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/request/GpsUpdateMessage.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/request/SendChatTextRequest$SendChatTextRequestBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/request/SendChatTextRequest.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/request/UpdateIncidentStatusRequest$UpdateIncidentStatusRequestBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/request/UpdateIncidentStatusRequest.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/response/ChatMessageResponse.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/response/DispatchAckResponse$DispatchAckResponseBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/response/DispatchAckResponse.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/response/IncidentResponse$IncidentResponseBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/response/IncidentResponse$ResponderInfo$ResponderInfoBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/response/IncidentResponse$ResponderInfo.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/response/IncidentResponse.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/dto/response/ResponderHistoryItem.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/entity/ChatMessage$ChatMessageBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/entity/ChatMessage.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/entity/DispatchAttempt$DispatchAttemptBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/entity/DispatchAttempt.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/entity/Incident$IncidentBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/entity/Incident.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/entity/ResponderLocation$ResponderLocationBuilder.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/entity/ResponderLocation.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/entity/enums/DispatchResponseType.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/entity/enums/IncidentStatus.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/exception/GlobalExceptionHandler.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/exception/IncidentAccessDeniedException.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/exception/IncidentNotFoundException.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/exception/InvalidIncidentStateException.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/feign/AuthServiceClient.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/feign/AuthServiceFallbackFactory$1.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/feign/AuthServiceFallbackFactory.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/kafka/CrashEventConsumer.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/kafka/IncidentEventPublisher$1.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/kafka/IncidentEventPublisher.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/repository/ChatMessageRepository.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/repository/DispatchAttemptRepository.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/repository/IncidentRepository.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/repository/ResponderLocationRepository.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/service/ChatService$Audio.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/service/ChatService.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/service/DispatchOrchestrator$1.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/service/DispatchOrchestrator.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/service/DispatchSweepService.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/service/EscalationTimerService.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/service/GpsStreamingService.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/service/IncidentService.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/service/NotificationService.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/service/ResponderHistoryService.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/service/SpatialQueryService.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../iers-dispatch-service/target/classes/com/iers/dispatch/websocket/WebSocketConfig.class" beforeDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$/.." />
+  </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;asad-rana306&quot;
+  }
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/asad-rana306/Intelligence-Emergency-Response-System.git&quot;,
+    &quot;accountId&quot;: &quot;ba02cfee-a732-47ee-b9a2-7827f22a6866&quot;
+  }
+}</component>
+  <component name="KubernetesApiProvider">{
+  &quot;isMigrated&quot;: true
+}</component>
+  <component name="ProblemsViewState">
+    <option name="selectedTabId" value="Security Analysis" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 8,
+  &quot;fromUser&quot;: false
+}</component>
+  <component name="ProjectId" id="3HkCAOvkhzV9bTK9GK0Px302YaZ" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Application.auth_service.executor&quot;: &quot;Run&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RequestMappingsPanelOrder0&quot;: &quot;0&quot;,
+    &quot;RequestMappingsPanelOrder1&quot;: &quot;1&quot;,
+    &quot;RequestMappingsPanelWidth0&quot;: &quot;75&quot;,
+    &quot;RequestMappingsPanelWidth1&quot;: &quot;75&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;Spring Boot.AuthServiceApplication.executor&quot;: &quot;Run&quot;,
+    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;kotlin-language-version-configured&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/anandkamath/Documents/Coding/FYP/IERS/iers-auth-service&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;project.structure.last.edited&quot;: &quot;Project&quot;,
+    &quot;project.structure.proportion&quot;: &quot;0.0&quot;,
+    &quot;project.structure.side.proportion&quot;: &quot;0.0&quot;,
+    &quot;studio.ml.bot.history.legacyLocationsMigrated&quot;: &quot;true&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  }
+}</component>
+  <component name="RunDashboard">
+    <option name="configurationTypes">
+      <set>
+        <option value="Application" />
+      </set>
+    </option>
+    <option name="configurationStatuses">
+      <map>
+        <entry key="Application">
+          <value>
+            <map>
+              <entry key="auth_service" value="STOPPED" />
+            </map>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="RunManager" selected="Application.auth_service">
+    <configuration name="auth_service" type="Application" factoryName="Application">
+      <envs>
+        <env name="FIREBASE_PROJECT_ID" value="iers-a6400" />
+        <env name="GOOGLE_APPLICATION_CREDENTIALS" value="$PROJECT_DIR$/../secrets/firebase-service-account.json" />
+        <env name="JWT_SECRET" value="TaKHaVuvCHEFsEVfypW7g9kZ8VTaKHaVuvCHEFsEVfypW7g9kZ8V99xX22" />
+        <env name="POSTGRES_PASSWORD" value="postgres123" />
+        <env name="POSTGRES_USER" value="postgres" />
+        <env name="SIMGATE_API_KEY" value="e3b8d112-36df-4fc6-b596-2acd650aff2b" />
+        <env name="SIMGATE_DEVICE_ID" value="android-0cb6ebcfbefac2b2" />
+      </envs>
+      <option name="MAIN_CLASS_NAME" value="com.iers.auth.AuthServiceApplication" />
+      <module name="auth-service" />
+      <method v="2">
+        <option name="Make" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="AuthServiceApplication" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot" nameIsGenerated="true">
+      <module name="auth-service" />
+      <option name="SPRING_BOOT_MAIN_CLASS" value="com.iers.auth.AuthServiceApplication" />
+      <method v="2">
+        <option name="Make" enabled="true" />
+      </method>
+    </configuration>
+    <list>
+      <item itemvalue="Application.auth_service" />
+      <item itemvalue="Spring Boot.AuthServiceApplication" />
+    </list>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-jdk-30f59d01ecdd-37e91769500f-intellij.indexing.shared.core-IU-261.26222.65" />
+        <option value="bundled-js-predefined-d6986cc7102b-31caf2ab9e3c-JavaScript-IU-261.26222.65" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="eee6ae27-336f-4aad-9543-cabc1f2830da" name="Changes" comment="" />
+      <created>1786402536330</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1786402536330</updated>
+      <workItem from="1786402538824" duration="129000" />
+      <workItem from="1793290216074" duration="751000" />
+      <workItem from="1793290989007" duration="820000" />
+      <workItem from="1793292339024" duration="1006000" />
+      <workItem from="1793293377116" duration="4776000" />
+      <workItem from="1794181109316" duration="4171000" />
+      <workItem from="1794294653266" duration="1636000" />
+      <workItem from="1794991267369" duration="3000" />
+      <workItem from="1794994246947" duration="2717000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>

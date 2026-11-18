@@ -43,6 +43,35 @@ spring:
         # ───────────────────────────────────────────
         #  AUTH & IDENTITY SERVICE (Service 2)
         # ───────────────────────────────────────────
+        # Firebase push tokens: the phone app registers / removes its token (JWT required).
+        - id: auth-push
+          uri: lb://auth-service
+          predicates:
+            - Path=/api/push/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: authCircuitBreaker
+                fallbackUri: forward:/fallback/auth
+
+        # SMS one-time codes (open paths). Stricter limit than the default, because every
+        # request can cost an SMS. Must stay BEFORE auth-public, which also matches /auth/**.
+        - id: auth-otp
+          uri: lb://auth-service
+          predicates:
+            - Path=/auth/otp/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: authCircuitBreaker
+                fallbackUri: forward:/fallback/auth
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 1     # 1 request per second ...
+                redis-rate-limiter.burstCapacity: 5     # ... with a burst of 5
+                redis-rate-limiter.requestedTokens: 1
+                key-resolver: "#{@ipKeyResolver}"
+
         - id: auth-public
           uri: lb://auth-service
           predicates:

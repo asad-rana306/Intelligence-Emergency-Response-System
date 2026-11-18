@@ -2,6 +2,7 @@ package com.iers.dispatch.repository;
 
 import com.iers.dispatch.entity.Incident;
 import com.iers.dispatch.entity.enums.IncidentStatus;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -160,6 +161,55 @@ public interface IncidentRepository extends JpaRepository<Incident, UUID> {
             + "where i.id = :id and i.status = :status "
             + "and (i.noResponderNotified is null or i.noResponderNotified = false)")
     int markNoResponderNotified(@Param("id") UUID id, @Param("status") IncidentStatus status);
+
+    // ── Contact alert (SMS to emergency contacts) ──
+
+    /** Active incidents whose contacts still have to be alerted and that nobody is working on right now. */
+    @Query("select i from Incident i where i.contactsNotifiedAt is null and i.status in :activeStatuses "
+            + "and i.createdAt > :notBefore "
+            + "and (i.contactsLeaseUntil is null or i.contactsLeaseUntil < :now) "
+            + "order by i.createdAt")
+    List<Incident> findContactAlertsDue(@Param("activeStatuses") Collection<IncidentStatus> activeStatuses,
+                                        @Param("now") Instant now,
+                                        @Param("notBefore") Instant notBefore,
+                                        Pageable page);
+
+    /**
+     * Take the contact alert for one incident. 1 = you own it until leaseUntil, 0 = someone else
+     * owns it, it is already done, or the incident is over (false alarm, resolved).
+     */
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update Incident i set i.contactsLeaseUntil = :leaseUntil "
+            + "where i.id = :id and i.contactsNotifiedAt is null and i.status in :activeStatuses "
+            + "and (i.contactsLeaseUntil is null or i.contactsLeaseUntil < :now)")
+    int claimContactAlert(@Param("id") UUID id,
+                          @Param("activeStatuses") Collection<IncidentStatus> activeStatuses,
+                          @Param("now") Instant now,
+                          @Param("leaseUntil") Instant leaseUntil);
+
+    /** Remember who already got the SMS and keep the lease while the worker goes on. */
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update Incident i set i.contactsSent = :sent, i.contactsLeaseUntil = :leaseUntil "
+            + "where i.id = :id and i.contactsNotifiedAt is null")
+    int saveContactsSent(@Param("id") UUID id,
+                         @Param("sent") String sent,
+                         @Param("leaseUntil") Instant leaseUntil);
+
+    /** Everybody has been alerted. */
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update Incident i set i.contactsNotifiedAt = :notifiedAt, i.contactsSent = :sent, i.contactsLeaseUntil = null "
+            + "where i.id = :id and i.contactsNotifiedAt is null")
+    int markContactsNotified(@Param("id") UUID id, @Param("sent") String sent, @Param("notifiedAt") Instant notifiedAt);
+
+    /** Something failed: let the sweep try again after retryAt. */
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update Incident i set i.contactsLeaseUntil = :retryAt "
+            + "where i.id = :id and i.contactsNotifiedAt is null")
+    int scheduleContactRetry(@Param("id") UUID id, @Param("retryAt") Instant retryAt);
 
     /** First tap only: 1 = tell the responder, 0 = a bystander was already marked. */
     @Transactional

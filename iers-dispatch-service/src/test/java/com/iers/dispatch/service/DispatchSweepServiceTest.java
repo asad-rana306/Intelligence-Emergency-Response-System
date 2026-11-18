@@ -1,15 +1,19 @@
 package com.iers.dispatch.service;
 
+import com.iers.dispatch.config.NotifyProperties;
 import com.iers.dispatch.entity.Incident;
 import com.iers.dispatch.entity.enums.IncidentStatus;
 import com.iers.dispatch.repository.IncidentRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import org.springframework.data.domain.Pageable;
+
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -24,8 +28,22 @@ class DispatchSweepServiceTest {
     @Mock private IncidentRepository incidentRepository;
     @Mock private EscalationTimerService timerService;
     @Mock private DispatchOrchestrator orchestrator;
+    @Mock private NotificationService notificationService;
 
-    @InjectMocks private DispatchSweepService sweepService;
+    private DispatchSweepService sweepService;
+
+    @BeforeEach
+    void setUp() {
+        NotifyProperties props = new NotifyProperties("http://t", "1122", Duration.ofSeconds(20),
+                Duration.ofMinutes(2), Duration.ofMinutes(30), 20, new NotifyProperties.Executor(1, 10));
+        sweepService = new DispatchSweepService(incidentRepository, timerService, orchestrator,
+                notificationService, props);
+    }
+
+    private Incident unalerted(UUID id, IncidentStatus status) {
+        return Incident.builder().id(id).crashEventId(UUID.randomUUID()).status(status)
+                .createdAt(Instant.now().minusSeconds(40)).build();
+    }
 
     private final UUID responderId = UUID.randomUUID();
 
@@ -120,7 +138,56 @@ class DispatchSweepServiceTest {
     }
 
     @Test
-    @DisplayName("sweep() does both jobs")
+    @DisplayName("Contact alerts: every incident whose contacts are not all told is handed to the notifier")
+    void contactAlerts_queued() {
+        UUID dispatching = UUID.randomUUID();
+        UUID noAmbulance = UUID.randomUUID();
+        when(incidentRepository.findContactAlertsDue(eq(IncidentService.ACTIVE), any(Instant.class),
+                any(Instant.class), any(Pageable.class)))
+                .thenReturn(List.of(unalerted(dispatching, IncidentStatus.DISPATCHED),
+                        unalerted(noAmbulance, IncidentStatus.DISPATCHING)));
+
+        sweepService.sweepContactAlerts();
+
+        verify(notificationService).crashDetected(dispatching);
+        verify(notificationService).crashDetected(noAmbulance);
+    }
+
+    @Test
+    @DisplayName("Contact alerts: the sweep reads only incidents younger than give-up-after, one batch at a time")
+    void contactAlerts_windowAndBatch() {
+        when(incidentRepository.findContactAlertsDue(any(), any(), any(), any())).thenReturn(List.of());
+
+        Instant before = Instant.now();
+        sweepService.sweepContactAlerts();
+
+        org.mockito.ArgumentCaptor<Instant> notBefore = org.mockito.ArgumentCaptor.forClass(Instant.class);
+        org.mockito.ArgumentCaptor<Pageable> page = org.mockito.ArgumentCaptor.forClass(Pageable.class);
+        verify(incidentRepository).findContactAlertsDue(eq(IncidentService.ACTIVE), any(Instant.class),
+                notBefore.capture(), page.capture());
+        org.assertj.core.api.Assertions.assertThat(notBefore.getValue())
+                .isBetween(before.minus(Duration.ofMinutes(30)).minusSeconds(1),
+                        Instant.now().minus(Duration.ofMinutes(30)).plusSeconds(1));
+        org.assertj.core.api.Assertions.assertThat(page.getValue().getPageSize()).isEqualTo(20);
+    }
+
+    @Test
+    @DisplayName("Contact alerts: one failing incident does not stop the others")
+    void contactAlerts_failureContinues() {
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+        when(incidentRepository.findContactAlertsDue(any(), any(), any(), any()))
+                .thenReturn(List.of(unalerted(first, IncidentStatus.DISPATCHING),
+                        unalerted(second, IncidentStatus.DISPATCHING)));
+        doThrow(new RuntimeException("boom")).when(notificationService).crashDetected(first);
+
+        sweepService.sweepContactAlerts();
+
+        verify(notificationService).crashDetected(second);
+    }
+
+    @Test
+    @DisplayName("sweep() does all three jobs")
     void sweep_doesBoth() {
         UUID offeredId = UUID.randomUUID();
         UUID waitingId = UUID.randomUUID();
@@ -129,10 +196,14 @@ class DispatchSweepServiceTest {
         when(timerService.isTimerPending(offeredId)).thenReturn(false);
         when(incidentRepository.findByStatusAndNextRetryAtBefore(eq(IncidentStatus.DISPATCHING), any(Instant.class)))
                 .thenReturn(List.of(waiting(waitingId)));
+        UUID unalertedId = UUID.randomUUID();
+        when(incidentRepository.findContactAlertsDue(any(), any(), any(), any()))
+                .thenReturn(List.of(unalerted(unalertedId, IncidentStatus.DISPATCHING)));
 
         sweepService.sweep();
 
         verify(orchestrator).onOfferTimeout(offeredId, responderId);
         verify(orchestrator).retryDispatch(waitingId);
+        verify(notificationService).crashDetected(unalertedId);
     }
 }

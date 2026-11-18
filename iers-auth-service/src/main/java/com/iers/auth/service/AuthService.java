@@ -13,6 +13,7 @@ import com.iers.auth.exception.UnauthorizedException;
 import com.iers.auth.repository.ResponderProfileRepository;
 import com.iers.auth.repository.UserRepository;
 import com.iers.auth.security.JwtProvider;
+import com.iers.auth.util.PhoneNormalizer;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,21 +39,33 @@ public class AuthService {
     private final JwtProvider jwtProvider;
     private final BCryptPasswordEncoder passwordEncoder;
     private final StringRedisTemplate redisTemplate;
+    private final OtpService otpService;
+    private final PushTokenService pushTokenService;
+    private final PhoneNormalizer phoneNormalizer;
 
     /**
      * Register a new user. If role is RESPONDER, also create a ResponderProfile.
+     *
+     * The phone number must have been verified with an SMS code first
+     * (POST /auth/otp/send, then /auth/otp/verify), unless auth.otp.required-on-register=false.
+     * The phone is stored in international form (+92...).
      */
     @Transactional
     public AuthResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new DuplicateResourceException("Email already registered: " + request.getEmail());
+        String email = request.getEmail().toLowerCase().trim();
+        if (userRepository.existsByEmail(email)) {
+            throw new DuplicateResourceException("Email already registered: " + email);
         }
 
+        String phone = phoneNormalizer.normalize(request.getPhone());
+        // Last check before saving: the code is used up here, so a failed request above does not burn it.
+        otpService.requireVerifiedPhone(phone);
+
         User user = User.builder()
-                .email(request.getEmail().toLowerCase().trim())
+                .email(email)
                 .passwordHash(passwordEncoder.encode(request.getPassword()))
                 .fullName(request.getFullName())
-                .phone(request.getPhone())
+                .phone(phone)
                 .role(request.getRole())
                 .build();
 
@@ -83,10 +96,11 @@ public class AuthService {
             throw new UnauthorizedException("Invalid email or password");
         }
 
-        // Update device ID for push notifications if provided
-        if (request.getDeviceId() != null) {
+        // The device id sent at login is the phone's Firebase token: remember it for push notifications.
+        if (request.getDeviceId() != null && !request.getDeviceId().isBlank()) {
             user.setDeviceId(request.getDeviceId());
             userRepository.save(user);
+            pushTokenService.register(user.getId(), request.getDeviceId(), null);
         }
 
         return generateAuthResponse(user);

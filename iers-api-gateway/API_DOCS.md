@@ -69,6 +69,8 @@ Every request is proxied to a downstream service discovered via Eureka.
 | POST   | `/auth/register`                      | `/auth/register`                     | Open      |
 | POST   | `/auth/login`                         | `/auth/login`                        | Open      |
 | POST   | `/auth/refresh`                       | `/auth/refresh`                      | Open      |
+| POST   | `/auth/otp/send`                      | `/auth/otp/send`                     | Open (1 req/s per IP, burst 5) |
+| POST   | `/auth/otp/verify`                    | `/auth/otp/verify`                   | Open (1 req/s per IP, burst 5) |
 | POST   | `/auth/logout`                        | `/auth/logout`                       | JWT       |
 | GET    | `/api/users/me`                       | `/api/users/me`                      | JWT       |
 | PUT    | `/api/users/me`                       | `/api/users/me`                      | JWT       |
@@ -80,6 +82,10 @@ Every request is proxied to a downstream service discovered via Eureka.
 | DELETE | `/api/emergency-contacts/{id}`        | `/api/emergency-contacts/{id}`       | JWT       |
 | PUT    | `/api/responders/status`              | `/api/responders/status`             | JWT       |
 | PUT    | `/api/responders/location`            | `/api/responders/location`           | JWT       |
+| GET    | `/api/responders/me`                  | `/api/responders/me`                 | JWT       |
+| POST   | `/api/responders/heartbeat`           | `/api/responders/heartbeat`          | JWT       |
+| POST   | `/api/push/tokens`                    | `/api/push/tokens`                   | JWT       |
+| DELETE | `/api/push/tokens?token=`             | `/api/push/tokens`                   | JWT       |
 | GET    | `/internal/users/{id}/medical-profile`| `/internal/users/{id}/medical-profile`| JWT/Internal |
 | GET    | `/internal/users/{id}/emergency-contacts`| `/internal/users/{id}/emergency-contacts`| JWT/Internal |
 | GET    | `/internal/responders/available`      | `/internal/responders/available`     | JWT/Internal |
@@ -123,6 +129,15 @@ The gateway uses a **Redis-backed Token Bucket** algorithm.
 | Burst Capacity     | 40 requests               |
 | Tokens per Request | 1                         |
 | Key Resolution     | Client IP address         |
+
+### SMS Code Override (`/auth/otp/**`, stricter)
+
+| Parameter          | Value                     |
+|--------------------|---------------------------|
+| Replenish Rate     | 1 request/second          |
+| Burst Capacity     | 5 requests                |
+
+The Auth service adds its own limits per phone number (30 s between codes, 3 codes per hour).
 
 ### IoT Telemetry Override (higher throughput)
 

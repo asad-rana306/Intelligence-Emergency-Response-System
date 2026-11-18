@@ -23,9 +23,13 @@ dispatch:
   kafka:
     topic: crash-events-test
     group-id: dispatch-group-test
-  twilio:
+    duty-listener-enabled: false
+  notify:
+    tracking-base-url: http://localhost:3000/track
+  sms:
+    provider: log
+  fcm:
     enabled: false
-  tracking-base-url: http://localhost:3000/track
 
 eureka:
   client:
