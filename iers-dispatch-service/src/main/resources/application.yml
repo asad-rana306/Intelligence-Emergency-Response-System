@@ -6,6 +6,7 @@
 #    REDIS_HOST / REDIS_PORT / REDIS_PASSWORD
 #    KAFKA_BOOTSTRAP
 #    TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER
+#    SIMGATE_API_KEY / SIMGATE_DEVICE_ID
 #    EUREKA_URL
 # ═══════════════════════════════════════════════════════════════
 
@@ -57,6 +58,16 @@ dispatch:
     from-number: ${TWILIO_FROM_NUMBER:<YOUR_TWILIO_PHONE>}
     enabled: ${TWILIO_ENABLED:false}
   tracking-base-url: ${TRACKING_BASE_URL:http://localhost:3000/track}
+
+# ── SimGate SMS Gateway ──
+simgate:
+  base-url: https://api.simgate.app
+  api-key: ${SIMGATE_API_KEY}
+  device-id: ${SIMGATE_DEVICE_ID}
+
+services:
+  auth:
+    url: http://auth-service:8081
 
 # ── Eureka ──
 eureka:

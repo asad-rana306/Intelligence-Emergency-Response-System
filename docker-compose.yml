@@ -82,7 +82,7 @@ services:
     volumes:
       - kafka-data:/var/lib/kafka/data
     healthcheck:
-      test: [ "CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1" ]
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 10
@@ -244,6 +244,8 @@ services:
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-placeholder_token}
       TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-+10000000000}
       TWILIO_ENABLED: ${TWILIO_ENABLED:-false}
+      SIMGATE_API_KEY: ${SIMGATE_API_KEY}
+      SIMGATE_DEVICE_ID: ${SIMGATE_DEVICE_ID}
       EUREKA_URL: http://eureka-server:8761/eureka
     depends_on:
       eureka-server:
