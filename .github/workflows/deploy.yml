@@ -28,11 +28,10 @@ jobs:
             set -e
             cd ~/iers
 
-            # 1. Remove accidental directory if Docker created one, then write Firebase JSON
-            mkdir -p ~/iers/secrets
-            if [ -d ~/iers/secrets/firebase-service-account.json ]; then
-              sudo rm -rf ~/iers/secrets/firebase-service-account.json
-            fi
+            # 1. Reclaim ownership of ~/iers/secrets (Docker created it as root), remove accidental directory, and write Firebase JSON
+            sudo mkdir -p ~/iers/secrets
+            sudo chown -R "$(whoami):$(whoami)" ~/iers/secrets
+            rm -rf ~/iers/secrets/firebase-service-account.json
             printf '%s\n' "$FIREBASE_SERVICE_ACCOUNT" > ~/iers/secrets/firebase-service-account.json
             chmod 600 ~/iers/secrets/firebase-service-account.json
 
