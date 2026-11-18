@@ -42,7 +42,7 @@ class FcmPushSenderTest {
     }
 
     @Test
-    @DisplayName("an urgent message with a lifetime, and an info message without one, both build and send")
+    @DisplayName("an urgent message with a lifetime, and a data-only message without one, both build and send")
     void bothMessageKinds() throws Exception {
         when(fcm.send(any(Message.class))).thenReturn("id");
         assertThat(sender.send("token-123456", offer)).isEqualTo(PushOutcome.SENT);

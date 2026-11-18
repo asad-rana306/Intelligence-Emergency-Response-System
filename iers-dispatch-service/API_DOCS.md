@@ -202,7 +202,7 @@ All pushes are sent in the background, after the commit. Tokens come from Auth (
 | `OFFER` | responder | an offer is made (high priority, lifetime = offer time, works when the app is closed) | `incidentId`, `lat`, `lng`, `driverName` |
 | `ACCEPTED` | driver | a responder accepted | `incidentId`, `responderName` |
 | `STAND_DOWN` | responder | the driver cancelled | `incidentId` |
-| `OFF_DUTY` | responder | shift over or phone silent (from Auth's `duty-events`) | `reason` = `MAX_DURATION` or `HEARTBEAT_LOST` |
+| `OFF_DUTY` | responder | shift over or phone silent (from Auth's `duty-events`) | `reason` = `MAX_DURATION` or `HEARTBEAT_LOST`; `title`, `body`. **Data only** (no system notification) |
 
 Android channels: `iers_offers` (urgent, with sound) and `iers_info`.
 Without credentials (`GOOGLE_APPLICATION_CREDENTIALS` / `FIREBASE_PROJECT_ID` empty) pushes are only logged. A key file that cannot be read stops the start-up.

@@ -9,10 +9,14 @@ import java.util.UUID;
  * One push notification. {@code data} always has a "type" the Flutter app switches on:
  * OFFER, ACCEPTED, STAND_DOWN, OFF_DUTY. All values are strings (an FCM rule).
  *
- * @param urgent true = high priority + the "iers_offers" Android channel (wakes a sleeping phone)
- * @param ttl    how long FCM may keep the message for an offline phone (null = FCM default)
+ * @param urgent   true = high priority + the "iers_offers" Android channel (wakes a sleeping phone)
+ * @param ttl      how long FCM may keep the message for an offline phone (null = FCM default)
+ * @param dataOnly true = no visible notification is sent. The app builds its own (with a sound and a
+ *                 button). Sent with high priority so a sleeping phone still wakes the app. The text
+ *                 travels in data as "title" and "body".
  */
-public record PushMessage(String title, String body, Map<String, String> data, boolean urgent, Duration ttl) {
+public record PushMessage(String title, String body, Map<String, String> data, boolean urgent, Duration ttl,
+                          boolean dataOnly) {
 
     public static final String OFFER = "OFFER";
     public static final String ACCEPTED = "ACCEPTED";
@@ -27,7 +31,7 @@ public record PushMessage(String title, String body, Map<String, String> data, b
         data.put("lng", lng == null ? "" : String.valueOf(lng));
         data.put("driverName", driverName == null ? "" : driverName);
         return new PushMessage("EMERGENCY - accept now", "A crash was reported near you. Tap to open.",
-                data, true, ttl);
+                data, true, ttl, false);
     }
 
     /** "Help is on the way" for the driver. */
@@ -39,7 +43,7 @@ public record PushMessage(String title, String body, Map<String, String> data, b
                 responderName == null || responderName.isBlank()
                         ? "A responder accepted your emergency."
                         : responderName + " accepted your emergency and is on the way.",
-                data, true, null);
+                data, true, null, false);
     }
 
     /** "Stand down" for a responder: the driver cancelled (false alarm). */
@@ -47,17 +51,22 @@ public record PushMessage(String title, String body, Map<String, String> data, b
         Map<String, String> data = typed(STAND_DOWN);
         data.put("incidentId", incidentId.toString());
         return new PushMessage("Emergency cancelled", "The driver is safe. You can stand down.",
-                data, true, null);
+                data, true, null, false);
     }
 
-    /** "You are now OFF duty". {@code reason} is MAX_DURATION or HEARTBEAT_LOST (may be null). */
+    /**
+     * "You are now OFF duty". {@code reason} is MAX_DURATION or HEARTBEAT_LOST (may be null).
+     * Data only: the app shows it itself, with a 5-second sound and a "Go on duty again" button.
+     */
     public static PushMessage offDuty(String reason) {
         Map<String, String> data = typed(OFF_DUTY);
         data.put("reason", reason == null ? "" : reason);
         String body = "HEARTBEAT_LOST".equals(reason)
                 ? "We lost contact with your phone, so you were put OFF duty. Open the app to go on duty again."
                 : "Your 1-hour shift is over. Open the app to go on duty again.";
-        return new PushMessage("You are now OFF duty", body, data, false, null);
+        data.put("title", "You are now OFF duty");
+        data.put("body", body);
+        return new PushMessage("You are now OFF duty", body, data, false, null, true);
     }
 
     private static Map<String, String> typed(String type) {

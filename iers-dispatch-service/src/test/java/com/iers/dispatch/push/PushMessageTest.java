@@ -56,6 +56,8 @@ class PushMessageTest {
         assertThat(shift.data()).containsEntry("type", "OFF_DUTY").containsEntry("reason", "MAX_DURATION");
         assertThat(shift.body()).contains("1-hour shift");
         assertThat(shift.urgent()).isFalse();
+        assertThat(shift.dataOnly()).isTrue();
+        assertThat(shift.data()).containsEntry("title", "You are now OFF duty").containsKey("body");
 
         assertThat(PushMessage.offDuty("HEARTBEAT_LOST").body()).contains("lost contact");
         assertThat(PushMessage.offDuty(null).data()).containsEntry("reason", "");

@@ -4,6 +4,14 @@
 #
 #  JUST RUN:  docker compose up --build
 #
+#  SECRETS (not in git): put them in a file named .env next to this file, for example
+#     SMS_PROVIDER=simgate
+#     SIMGATE_API_KEY=...
+#     SIMGATE_DEVICE_ID=...
+#     TRACKING_BASE_URL=http://<your-server>/track
+#  The GitHub Action writes the SimGate lines for you (see deploy.yml).
+#  Firebase key file on the server: ~/iers/secrets/firebase-service-account.json
+#
 #  PORT MAP:
 #    8761  — Eureka Dashboard        http://localhost:8761
 #    8080  — API Gateway             http://localhost:8080
@@ -172,6 +180,16 @@ services:
       EUREKA_URL: http://eureka-server:8761/eureka
       GOOGLE_APPLICATION_CREDENTIALS: /app/firebase-sa.json
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-iers-a6400}
+      # OTP over SMS. "log" only prints the code in the log (development). "simgate" really sends it.
+      SMS_PROVIDER: ${SMS_PROVIDER:-log}
+      SIMGATE_API_KEY: ${SIMGATE_API_KEY:-}
+      SIMGATE_DEVICE_ID: ${SIMGATE_DEVICE_ID:-}
+      DEFAULT_COUNTRY_CODE: ${DEFAULT_COUNTRY_CODE:-92}
+      OTP_REQUIRED: ${OTP_REQUIRED:-true}
+      # Responder duty: 1-hour shift. Auth tells Dispatch over Kafka when a shift ends.
+      KAFKA_BOOTSTRAP: kafka:9092
+      DUTY_EVENTS_ENABLED: ${DUTY_EVENTS_ENABLED:-true}
+      DUTY_MAX_HOURS: ${DUTY_MAX_HOURS:-1}
     volumes:
       - ~/iers/secrets/firebase-service-account.json:/app/firebase-sa.json:ro
     depends_on:
@@ -180,6 +198,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health | grep UP || exit 1"]
@@ -244,12 +264,20 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-iers_redis_2026}
       KAFKA_BOOTSTRAP: kafka:9092
-      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-AC_placeholder}
-      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-placeholder_token}
-      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-+10000000000}
-      TWILIO_ENABLED: ${TWILIO_ENABLED:-false}
-      SIMGATE_API_KEY: ${SIMGATE_API_KEY}
-      SIMGATE_DEVICE_ID: ${SIMGATE_DEVICE_ID}
+      # SMS to emergency contacts. "log" only prints (development). "simgate" really sends.
+      SMS_PROVIDER: ${SMS_PROVIDER:-log}
+      SIMGATE_API_KEY: ${SIMGATE_API_KEY:-}
+      SIMGATE_DEVICE_ID: ${SIMGATE_DEVICE_ID:-}
+      EMERGENCY_NUMBER: ${EMERGENCY_NUMBER:-1122}
+      # The link inside the SMS that shows the live ambulance position.
+      TRACKING_BASE_URL: ${TRACKING_BASE_URL:-http://localhost:3000/track}
+      # Push messages to responders (works with the app closed).
+      FCM_ENABLED: ${FCM_ENABLED:-true}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-iers-a6400}
+      GOOGLE_APPLICATION_CREDENTIALS: /app/firebase-sa.json
+      # Reads "shift over" messages from Auth and tells the responder.
+      DUTY_LISTENER_ENABLED: ${DUTY_LISTENER_ENABLED:-true}
+      DDL_AUTO: ${DDL_AUTO:-update}
       EUREKA_URL: http://eureka-server:8761/eureka
     depends_on:
       eureka-server:
@@ -264,6 +292,7 @@ services:
         condition: service_healthy
     volumes:
       - chat-audio:/app/chat-audio
+      - ~/iers/secrets/firebase-service-account.json:/app/firebase-sa.json:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8083/actuator/health | grep UP || exit 1"]
       interval: 10s

@@ -37,7 +37,7 @@ The old files `push/AuthPushClient`, `push/IncidentPushListener`, `push/Firebase
 3. **No ambulance accepts for 2 minutes** → contacts get the "call 1122" SMS (once).
 4. **Responder accepts** → driver gets push `ACCEPTED`, contacts get "on the way".
 5. **Driver cancels** → responder gets `STAND_DOWN`; contacts who got the first SMS get "false alarm".
-6. **Shift over / phone silent** (Auth `duty-events`) → responder leaves the pool at once and gets push `OFF_DUTY` (`reason` = `MAX_DURATION` or `HEARTBEAT_LOST`).
+6. **Shift over / phone silent** (Auth `duty-events`) → responder leaves the pool at once and gets push `OFF_DUTY` (`reason` = `MAX_DURATION` or `HEARTBEAT_LOST`). This one is **data only** (no system notification, high priority): the app shows its own alert with a 5-second sound and a "Go on duty again" button. The text is in `data.title` / `data.body`.
 
 ## Many instances (scaling)
 

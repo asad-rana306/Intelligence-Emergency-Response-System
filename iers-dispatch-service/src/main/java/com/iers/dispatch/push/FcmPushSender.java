@@ -12,9 +12,11 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * Sends the push through Firebase Cloud Messaging.
  *
- * Every message has a visible notification AND data. A visible notification is shown by Android
+ * Most messages have a visible notification AND data. A visible notification is shown by Android
  * itself, so it works even when the app is closed. Urgent messages use high priority and the
  * "iers_offers" channel, which the Flutter app creates with sound.
+ * A "data only" message has no visible notification: the app shows its own (OFF_DUTY). It is always
+ * sent with high priority, otherwise a sleeping phone may get it late.
  */
 @Slf4j
 public class FcmPushSender implements PushSender {
@@ -31,25 +33,30 @@ public class FcmPushSender implements PushSender {
     @Override
     public PushOutcome send(String token, PushMessage message) {
         try {
+            boolean high = message.urgent() || message.dataOnly();
             AndroidConfig.Builder android = AndroidConfig.builder()
-                    .setPriority(message.urgent() ? AndroidConfig.Priority.HIGH : AndroidConfig.Priority.NORMAL)
-                    .setNotification(AndroidNotification.builder()
-                            .setChannelId(message.urgent() ? CHANNEL_URGENT : CHANNEL_INFO)
-                            .setSound("default")
-                            .build());
+                    .setPriority(high ? AndroidConfig.Priority.HIGH : AndroidConfig.Priority.NORMAL);
+            if (!message.dataOnly()) {
+                android.setNotification(AndroidNotification.builder()
+                        .setChannelId(message.urgent() ? CHANNEL_URGENT : CHANNEL_INFO)
+                        .setSound("default")
+                        .build());
+            }
             if (message.ttl() != null) {
                 android.setTtl(message.ttl().toMillis());
             }
 
-            Message fcmMessage = Message.builder()
+            Message.Builder builder = Message.builder()
                     .setToken(token)
                     .putAllData(message.data())
-                    .setNotification(Notification.builder()
-                            .setTitle(message.title())
-                            .setBody(message.body())
-                            .build())
-                    .setAndroidConfig(android.build())
-                    .build();
+                    .setAndroidConfig(android.build());
+            if (!message.dataOnly()) {
+                builder.setNotification(Notification.builder()
+                        .setTitle(message.title())
+                        .setBody(message.body())
+                        .build());
+            }
+            Message fcmMessage = builder.build();
 
             String id = fcm.send(fcmMessage);
             log.info("FCM sent id={} type={} to ***{}", id, message.data().get("type"), tail(token));
