@@ -170,6 +170,10 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-iers_redis_2026}
       EUREKA_URL: http://eureka-server:8761/eureka
+      GOOGLE_APPLICATION_CREDENTIALS: /app/firebase-sa.json
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-iers-a6400}
+    volumes:
+      - ~/iers/secrets/firebase-service-account.json:/app/firebase-sa.json:ro
     depends_on:
       eureka-server:
         condition: service_healthy

@@ -1,0 +1,5 @@
+.env
+.evn
+secrets/
+firebase-*.json
+.DS_Store
