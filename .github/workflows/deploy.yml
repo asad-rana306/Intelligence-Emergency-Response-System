@@ -11,6 +11,11 @@ jobs:
     steps:
       - name: SSH into EC2 and redeploy
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          SIMGATE_API_KEY: ${{ secrets.SIMGATE_API_KEY }}
+          SIMGATE_DEVICE_ID: ${{ secrets.SIMGATE_DEVICE_ID }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
@@ -18,9 +23,32 @@ jobs:
           port: 22
           timeout: 60s
           command_timeout: 30m
+          envs: SIMGATE_API_KEY,SIMGATE_DEVICE_ID,FIREBASE_PROJECT_ID,FIREBASE_SERVICE_ACCOUNT
           script: |
             set -e
             cd ~/iers
+
+            # 1. Remove accidental directory if Docker created one, then write Firebase JSON
+            mkdir -p ~/iers/secrets
+            if [ -d ~/iers/secrets/firebase-service-account.json ]; then
+              sudo rm -rf ~/iers/secrets/firebase-service-account.json
+            fi
+            printf '%s\n' "$FIREBASE_SERVICE_ACCOUNT" > ~/iers/secrets/firebase-service-account.json
+            chmod 600 ~/iers/secrets/firebase-service-account.json
+
+            # 2. Update SimGate & Firebase variables in ~/iers/.env without erasing existing keys
+            touch ~/iers/.env
+            grep -vE '^(SMS_PROVIDER|SIMGATE_API_KEY|SIMGATE_DEVICE_ID|FIREBASE_PROJECT_ID)=' ~/iers/.env > ~/iers/.env.tmp || true
+            {
+              cat ~/iers/.env.tmp
+              echo "SMS_PROVIDER=simgate"
+              echo "SIMGATE_API_KEY=$SIMGATE_API_KEY"
+              echo "SIMGATE_DEVICE_ID=$SIMGATE_DEVICE_ID"
+              echo "FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-iers-a6400}"
+            } > ~/iers/.env
+            rm -f ~/iers/.env.tmp
+
+            # 3. Pull latest code and rebuild containers
             git pull origin main
             docker compose up -d --build
             docker image prune -f
